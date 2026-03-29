@@ -1,0 +1,11 @@
+HEADER    HEMOGLOBIN
+ATOM      1  N   VAL A   1      26.017  24.947  27.657
+ATOM      2  CA  VAL A   1      25.447  23.659  27.215
+ATOM      3  C   VAL A   1      24.123  23.874  26.450
+ATOM      4  O   VAL A   1      23.800  25.000  26.100
+ATOM      5  CB  VAL A   1      26.300  22.600  26.500
+ATOM      6  N   GLY A   2      23.400  22.800  25.900
+ATOM      7  CA  GLY A   2      22.100  23.000  25.200
+ATOM      8  C   GLY A   2      21.500  21.700  24.700
+ATOM      9  O   GLY A   2      20.300  21.600  24.500
+END
