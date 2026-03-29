@@ -1,3 +1,7 @@
 streamlit
+numpy
+pandas
+biopython
 rdkit
 py3Dmol
+scipy
