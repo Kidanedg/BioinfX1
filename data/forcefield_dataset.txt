@@ -1,0 +1,122 @@
+# =========================================================
+# FORCE FIELD DATASET (TEACHING VERSION)
+# Inspired by AMBER + Docking Scoring Functions
+# =========================================================
+
+# ---------------------------
+# SECTION 1: ATOM TYPES
+# ---------------------------
+# Format:
+# ATOM  atom_type   element   mass   charge   sigma   epsilon
+
+ATOM   C     C   12.01   0.51   3.40   0.1094
+ATOM   H     H   1.008   0.09   2.50   0.0157
+ATOM   O     O   16.00  -0.51   3.00   0.2100
+ATOM   N     N   14.01  -0.47   3.25   0.1700
+ATOM   S     S   32.07  -0.23   3.55   0.2500
+
+# ---------------------------
+# SECTION 2: BONDS
+# ---------------------------
+# Format:
+# BOND atom1 atom2   k (kcal/mol·Å^2)   r0 (Å)
+
+BOND   C   H   340.0   1.09
+BOND   C   C   310.0   1.53
+BOND   C   O   320.0   1.43
+BOND   C   N   337.0   1.47
+BOND   S   H   250.0   1.34
+
+# ---------------------------
+# SECTION 3: ANGLES
+# ---------------------------
+# Format:
+# ANGLE atom1 atom2 atom3   k   theta0 (degrees)
+
+ANGLE  H   C   H   33.0   109.5
+ANGLE  H   C   C   35.0   109.5
+ANGLE  C   C   O   50.0   120.0
+ANGLE  C   N   H   45.0   118.0
+
+# ---------------------------
+# SECTION 4: DIHEDRALS
+# ---------------------------
+# Format:
+# DIHEDRAL atom1 atom2 atom3 atom4   Vn   gamma   n
+
+DIHEDRAL  H   C   C   H   0.15   0.0   3
+DIHEDRAL  C   C   C   C   0.20   180.0  2
+DIHEDRAL  H   C   N   H   0.25   180.0  2
+
+# ---------------------------
+# SECTION 5: NONBONDED (LJ)
+# ---------------------------
+# Format:
+# NONBONDED atom_type   epsilon   sigma
+
+NONBONDED   C   0.1094   3.40
+NONBONDED   H   0.0157   2.50
+NONBONDED   O   0.2100   3.00
+NONBONDED   N   0.1700   3.25
+NONBONDED   S   0.2500   3.55
+
+# ---------------------------
+# SECTION 6: DOCKING SCORING (SIMPLIFIED)
+# ---------------------------
+# Format:
+# DOCKING term   weight
+
+DOCKING   vdW          0.1662
+DOCKING   hbond        0.1209
+DOCKING   electrostatic 0.1406
+DOCKING   torsional    0.2983
+DOCKING   desolvation  0.1322
+
+# ---------------------------
+# SECTION 7: TRAINING MOLECULES
+# ---------------------------
+# Format:
+# MOLECULE name
+# ATOMS: id type x y z
+
+MOLECULE Methane
+ATOM 1 C 0.000 0.000 0.000
+ATOM 2 H 0.629 0.629 0.629
+ATOM 3 H -0.629 -0.629 0.629
+ATOM 4 H -0.629 0.629 -0.629
+ATOM 5 H 0.629 -0.629 -0.629
+
+MOLECULE Water
+ATOM 1 O 0.000 0.000 0.000
+ATOM 2 H 0.958 0.000 0.000
+ATOM 3 H -0.239 0.927 0.000
+
+MOLECULE Ammonia
+ATOM 1 N 0.000 0.000 0.000
+ATOM 2 H 0.937 0.000 0.000
+ATOM 3 H -0.469 0.812 0.000
+ATOM 4 H -0.469 -0.812 0.000
+
+# ---------------------------
+# SECTION 8: ASSIGNMENT TASKS
+# ---------------------------
+# Students will:
+# 1. Predict bond energy before computation
+# 2. Compare predicted vs computed
+# 3. Interpret docking scores
+
+ASSIGNMENT 1
+TITLE Predict Bond Energy
+QUESTION Estimate energy of C-H bond before calculation
+
+ASSIGNMENT 2
+TITLE Lennard-Jones Interpretation
+QUESTION Explain attraction vs repulsion regions
+
+ASSIGNMENT 3
+TITLE Docking Score Analysis
+QUESTION Which term dominates binding and why?
+
+# ---------------------------
+# END OF FILE
+# ---------------------------
