@@ -1,0 +1,4 @@
+id,title,question,difficulty,topic
+1,Predict Bond Energy,Estimate energy of C-H bond before calculation,Easy,Bonds
+2,Lennard-Jones Interpretation,Explain attraction vs repulsion regions,Medium,Nonbonded
+3,Docking Score Analysis,Which term dominates binding and why?,Hard,Docking
