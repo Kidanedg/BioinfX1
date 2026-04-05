@@ -6,3 +6,4 @@ plotly
 scipy
 biopython
 py3Dmol
+openmm
