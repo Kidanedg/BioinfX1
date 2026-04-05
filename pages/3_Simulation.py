@@ -1,188 +1,246 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import os
 
-# Optional 3D viewer
+# ================= GPU SUPPORT =================
+try:
+    import cupy as cp
+    xp = cp
+    GPU = True
+except:
+    xp = np
+    GPU = False
+
+# ================= 3D VIEWER =================
 try:
     import py3Dmol
 except:
     py3Dmol = None
 
-st.title("⚙️ Simulation Engine")
+st.title("⚙️ Advanced Biomolecular Simulation Engine")
 
-# -----------------------------
-# CHECK SESSION DATA
-# -----------------------------
+st.sidebar.success(f"GPU Enabled: {GPU}")
+
+# =========================================================
+# 📂 PDB UPLOAD
+# =========================================================
+uploaded_file = st.file_uploader("Upload PDB File", type=["pdb"])
+
+def parse_pdb(file):
+    coords = []
+    atoms = []
+    residues = []
+
+    for line in file.readlines():
+        line = line.decode("utf-8")
+
+        if line.startswith(("ATOM", "HETATM")):
+            x = float(line[30:38])
+            y = float(line[38:46])
+            z = float(line[46:54])
+
+            atom = line[12:16].strip()
+            res = line[17:20].strip()
+
+            coords.append([x, y, z])
+            atoms.append(atom)
+            residues.append(res)
+
+    return xp.array(coords), atoms, residues
+
+if uploaded_file:
+    coords, atoms, residues = parse_pdb(uploaded_file)
+    st.session_state.coords = coords
+    st.session_state.atoms = atoms
+    st.session_state.residues = residues
+    st.success(f"Loaded {len(coords)} atoms")
+
 coords = st.session_state.get("coords", None)
 
 if coords is None:
-    st.warning("⚠️ Run Structure Analysis first to load molecule.")
+    st.warning("Upload a PDB file to start.")
     st.stop()
 
-atom_types = ["C"] * len(coords)
+coords = coords.copy()
+N = len(coords)
 
-# -----------------------------
-# ENERGY FUNCTION (AMBER-LIKE)
-# -----------------------------
-def compute_energy(coords, atom_types):
+# =========================================================
+# ⚙️ PARAMETERS
+# =========================================================
+dt = st.sidebar.slider("Time Step", 0.001, 0.02, 0.005)
+steps = st.sidebar.slider("Steps", 50, 500, 200)
+temperature = st.sidebar.slider("Temperature", 50, 1000, 300)
 
-    E_bond = E_angle = E_dihedral = E_vdw = E_elec = 0
+# =========================================================
+# ⚡ PARAMETERS (AMBER-LIKE SIMPLIFIED)
+# =========================================================
+sigma = 3.5
+epsilon = 0.2
+k_bond = 200
+r0 = 1.5
+k_angle = 40
+theta0 = xp.pi
+charges = xp.random.uniform(-0.5, 0.5, N)
+
+# =========================================================
+# 🔬 ENERGY + FORCES
+# =========================================================
+def compute_forces(coords):
+    forces = xp.zeros_like(coords)
 
     # Bond
-    for i in range(len(coords)-1):
-        r = np.linalg.norm(coords[i] - coords[i+1])
-        r = max(r, 1e-6)
-        E_bond += 100 * (r - 1.5)**2
+    for i in range(N - 1):
+        rij = coords[i] - coords[i+1]
+        r = xp.linalg.norm(rij) + 1e-9
+        f = -2 * k_bond * (r - r0) * (rij / r)
+        forces[i] += f
+        forces[i+1] -= f
 
-    # Angle
-    for i in range(len(coords)-2):
-        v1 = coords[i] - coords[i+1]
-        v2 = coords[i+2] - coords[i+1]
-        denom = np.linalg.norm(v1)*np.linalg.norm(v2)
-        if denom == 0:
-            continue
-        theta = np.degrees(np.arccos(np.clip(np.dot(v1, v2)/denom, -1, 1)))
-        E_angle += 20 * (theta - 109.5)**2
+    # vdW (LJ)
+    for i in range(N):
+        for j in range(i+2, N):
+            rij = coords[i] - coords[j]
+            r = xp.linalg.norm(rij) + 1e-9
 
-    # Dihedral
-    for i in range(len(coords)-3):
-        E_dihedral += 2 * (1 + np.cos(np.radians(i)))
+            f_mag = 24*epsilon*((2*(sigma**12)/r**13) - ((sigma**6)/r**7))
+            f_vec = f_mag * (rij / r)
 
-    # Nonbonded
-    for i in range(len(coords)):
-        for j in range(i+2, len(coords)):
-            r = np.linalg.norm(coords[i] - coords[j])
-            if r < 1e-6:
-                continue
-            E_vdw += 4 * ((3.5/r)**12 - (3.5/r)**6)
-            E_elec += (0.1 * 0.1) / r
+            forces[i] += f_vec
+            forces[j] -= f_vec
 
-    return {
-        "Bond": E_bond,
-        "Angle": E_angle,
-        "Dihedral": E_dihedral,
-        "vdW": E_vdw,
-        "Electrostatic": E_elec,
-        "Total": E_bond + E_angle + E_dihedral + E_vdw + E_elec
-    }
+    # Electrostatic
+    for i in range(N):
+        for j in range(i+1, N):
+            rij = coords[i] - coords[j]
+            r = xp.linalg.norm(rij) + 1e-9
 
-# -----------------------------
-# COMPUTE ENERGY
-# -----------------------------
-energy = compute_energy(coords, atom_types)
+            f_mag = charges[i]*charges[j]/r**2
+            f_vec = f_mag * (rij / r)
 
-st.metric("Total Energy", f"{energy['Total']:.2f}")
+            forces[i] += f_vec
+            forces[j] -= f_vec
 
-# -----------------------------
-# ENERGY BREAKDOWN (YOUR PART FIXED)
-# -----------------------------
-show_details = st.checkbox("Show Detailed Energy Breakdown")
+    return forces
 
-if show_details:
-    df = pd.DataFrame({
-        "Energy Type": ["Bond", "Angle", "Dihedral", "vdW", "Electrostatic"],
-        "Value": [
-            energy["Bond"],
-            energy["Angle"],
-            energy["Dihedral"],
-            energy["vdW"],
-            energy["Electrostatic"]
-        ]
-    })
+def compute_energy(coords):
+    E = 0
 
-    st.table(df)
-    st.bar_chart(df.set_index("Energy Type"))
+    for i in range(N-1):
+        r = xp.linalg.norm(coords[i] - coords[i+1])
+        E += k_bond * (r - r0)**2
 
-# -----------------------------
-# 🎛️ INTERACTIVE LJ SIMULATION
-# -----------------------------
-st.markdown("### 🎛️ Lennard-Jones Interaction")
+    for i in range(N):
+        for j in range(i+2, N):
+            r = xp.linalg.norm(coords[i] - coords[j])
+            E += 4*epsilon*((sigma/r)**12 - (sigma/r)**6)
 
-r = st.slider("Distance (r)", 0.5, 10.0, 3.0, 0.1)
-sigma = st.slider("Sigma (σ)", 1.0, 5.0, 3.5, 0.1)
-epsilon = st.slider("Epsilon (ε)", 0.01, 1.0, 0.2, 0.01)
+    return float(E)
 
-def lj(r, sigma, epsilon):
-    r = max(r, 1e-6)
-    return 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
-
-lj_energy = lj(r, sigma, epsilon)
-
-st.metric("LJ Energy", f"{lj_energy:.4f}")
-
-# Plot curve
-r_vals = np.linspace(0.5, 10, 200)
-lj_vals = [lj(rv, sigma, epsilon) for rv in r_vals]
-
-df_lj = pd.DataFrame({"Distance": r_vals, "Energy": lj_vals})
-st.line_chart(df_lj.set_index("Distance"))
-
-# -----------------------------
-# ⏱️ MOLECULAR DYNAMICS
-# -----------------------------
-st.markdown("### ⏱️ Molecular Dynamics")
-
-def run_md(coords, steps=50, dt=0.01):
+# =========================================================
+# 🧘 ENERGY MINIMIZATION
+# =========================================================
+def minimize(coords, iterations=100, lr=0.001):
     coords = coords.copy()
-    velocities = np.zeros_like(coords)
+
+    for _ in range(iterations):
+        forces = compute_forces(coords)
+        coords += lr * forces  # gradient descent
+
+    return coords
+
+if st.button("🧘 Energy Minimization"):
+    coords = minimize(coords)
+    st.session_state.coords = coords
+    st.success("Minimization complete")
+
+# =========================================================
+# 🚀 MD SIMULATION
+# =========================================================
+def run_md(coords):
+    coords = coords.copy()
+    v = xp.random.randn(N,3) * 0.1
+    forces = compute_forces(coords)
+
     traj = []
+    energies = []
 
     for _ in range(steps):
-        forces = np.random.randn(*coords.shape) * 0.1
-        velocities += forces * dt
-        coords += velocities * dt
-        traj.append(coords.copy())
+        coords += v*dt + 0.5*forces*dt**2
+        new_forces = compute_forces(coords)
+        v += 0.5*(forces + new_forces)*dt
+        forces = new_forces
 
-    return traj
+        traj.append(xp.asnumpy(coords))
+        energies.append(compute_energy(coords))
 
-if st.button("Run Simulation"):
+    return traj, energies
 
-    traj = run_md(coords, steps=100)
-
-    energies = []
-    for frame in traj:
-        e = compute_energy(frame, atom_types)
-        energies.append(e["Total"])
-
-    st.line_chart(energies)
+if st.button("🚀 Run MD Simulation"):
+    traj, energies = run_md(coords)
 
     st.session_state.traj = traj
+    st.session_state.energies = energies
 
-# -----------------------------
-# FRAME VIEWER
-# -----------------------------
-traj = st.session_state.get("traj", None)
+    st.success("Simulation complete")
 
-if traj is not None:
-    st.markdown("### 🎞️ Trajectory Viewer")
-    frame = st.slider("Frame", 0, len(traj)-1, 0)
+# =========================================================
+# 📈 ENERGY PLOT
+# =========================================================
+if "energies" in st.session_state:
+    st.line_chart(st.session_state.energies)
 
-    current = traj[frame]
-    st.write(f"Frame {frame} | Atoms: {len(current)}")
+# =========================================================
+# 🎞️ VIEWER
+# =========================================================
+if "traj" in st.session_state:
 
-# -----------------------------
-# 🎥 3D VISUALIZATION (OPTIONAL)
-# -----------------------------
-if py3Dmol and os.path.exists("data/proteins"):
-    st.markdown("### 🎥 3D Viewer")
+    frame = st.slider("Frame", 0, len(st.session_state.traj)-1, 0)
+    current = st.session_state.traj[frame]
 
-    files = os.listdir("data/proteins")
-    if files:
-        selected = st.selectbox("Select PDB", files)
+    if py3Dmol:
+        pdb_str = ""
+        for i,(x,y,z) in enumerate(current):
+            pdb_str += f"ATOM {i:5d} C MOL 1 {x:8.3f}{y:8.3f}{z:8.3f} 1.00 0.00 C\n"
 
-        with open(os.path.join("data/proteins", selected)) as f:
-            pdb = f.read()
-
-        viewer = py3Dmol.view(width=600, height=400)
-        viewer.addModel(pdb, "pdb")
-        viewer.setStyle({"stick": {}})
+        viewer = py3Dmol.view(width=700, height=500)
+        viewer.addModel(pdb_str, "pdb")
+        viewer.setStyle({"cartoon":{}})  # protein style
         viewer.zoomTo()
 
-        st.components.v1.html(viewer._make_html(), height=400)
+        st.components.v1.html(viewer._make_html(), height=500)
 
-# -----------------------------
-# END
-# -----------------------------
+# =========================================================
+# 💾 EXPORT TRAJECTORY
+# =========================================================
+def export_xyz(traj):
+    lines = []
+    for frame in traj:
+        lines.append(str(len(frame)))
+        lines.append("Frame")
+        for x,y,z in frame:
+            lines.append(f"C {x:.3f} {y:.3f} {z:.3f}")
+    return "\n".join(lines)
+
+def export_pdb(traj):
+    lines = []
+    for f, frame in enumerate(traj):
+        for i,(x,y,z) in enumerate(frame):
+            lines.append(f"ATOM {i:5d} C MOL {f:4d} {x:8.3f}{y:8.3f}{z:8.3f}")
+        lines.append("ENDMDL")
+    return "\n".join(lines)
+
+if "traj" in st.session_state:
+    xyz_data = export_xyz(st.session_state.traj)
+    pdb_data = export_pdb(st.session_state.traj)
+
+    st.download_button("Download XYZ", xyz_data, "trajectory.xyz")
+    st.download_button("Download PDB", pdb_data, "trajectory.pdb")
+
+# =========================================================
+# 🔬 ENERGY SNAPSHOT
+# =========================================================
+E = compute_energy(coords)
+st.metric("Energy", f"{E:.3f}")
+
 st.markdown("---")
-st.success("✅ Dynamic Biomolecular Simulation Running")
+st.success("🔥 Research-Level MD Engine Ready")
