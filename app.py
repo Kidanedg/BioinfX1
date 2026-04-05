@@ -1,10 +1,9 @@
 import streamlit as st
-import os
+import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
-import re
-import py3Dmol
 import matplotlib.pyplot as plt
+from io import StringIO
 
 # =============================
 # SAFE IMPORT
@@ -12,10 +11,10 @@ import matplotlib.pyplot as plt
 try:
     from Bio.PDB import PDBParser
 except:
-    st.error("Install Biopython")
+    st.error("Install Biopython: pip install biopython")
     st.stop()
 
-st.set_page_config(page_title="Biomolecular Platform", layout="wide")
+st.set_page_config(page_title="Biomolecular Teaching Platform", layout="wide")
 
 # =============================
 # LOGIN
@@ -33,50 +32,60 @@ if not st.session_state.logged_in:
     if st.button("Login"):
         if USERS.get(u) == p:
             st.session_state.logged_in = True
+            st.rerun()
         else:
             st.error("Wrong login")
     st.stop()
 
 # =============================
-# LOAD FORCE FIELD
+# SIDEBAR NAVIGATION
 # =============================
-@st.cache_data
-def load_ff():
-    try:
-        def load_csv(p):
-            df = pd.read_csv(p)
-            df.columns = df.columns.str.strip().str.lower()
-            return df
+st.sidebar.title("📚 Navigation")
 
-        return (
-            load_csv("data/atoms.csv"),
-            load_csv("data/bonds.csv"),
-            load_csv("data/angles.csv"),
-            load_csv("data/dihedrals.csv"),
-            load_csv("data/nonbonded.csv"),
-        )
-    except:
-        return None, None, None, None, None
-
-atoms_df, bonds_df, angles_df, dihedrals_df, nonbonded_df = load_ff()
+page = st.sidebar.radio(
+    "Go to",
+    ["Theory", "Dataset", "Simulation", "Assignment", "Quiz", "Analytics", "Structure Analysis"]
+)
 
 # =============================
-# UPLOAD FF
+# FILE UPLOAD
 # =============================
 st.sidebar.markdown("### 📂 Upload Force Field")
 
-def load_uploaded(file):
-    if file:
-        df = pd.read_csv(file)
-        df.columns = df.columns.str.strip().str.lower()
-        return df
-    return None
+atoms_file = st.sidebar.file_uploader("Atoms CSV", type="csv")
+bonds_file = st.sidebar.file_uploader("Bonds CSV", type="csv")
+angles_file = st.sidebar.file_uploader("Angles CSV", type="csv")
+dihedrals_file = st.sidebar.file_uploader("Dihedrals CSV", type="csv")
+nonbonded_file = st.sidebar.file_uploader("Nonbonded CSV", type="csv")
 
-atoms_df = load_uploaded(st.sidebar.file_uploader("Atoms CSV")) or atoms_df
-bonds_df = load_uploaded(st.sidebar.file_uploader("Bonds CSV")) or bonds_df
-angles_df = load_uploaded(st.sidebar.file_uploader("Angles CSV")) or angles_df
-dihedrals_df = load_uploaded(st.sidebar.file_uploader("Dihedrals CSV")) or dihedrals_df
-nonbonded_df = load_uploaded(st.sidebar.file_uploader("Nonbonded CSV")) or nonbonded_df
+st.sidebar.markdown("### 🧭 Control Panel")
+
+pdb_file = st.sidebar.file_uploader("Upload PDB", type="pdb")
+
+# =============================
+# 3D VIEWER (FIXED)
+# =============================
+def show_3d(pdb_string, style="stick"):
+
+    styles = {
+        "stick": '{"stick":{}}',
+        "sphere": '{"sphere":{}}',
+        "cartoon": '{"cartoon":{}}'
+    }
+
+    html = f"""
+    <div id="viewer" style="width:100%; height:500px;"></div>
+    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+    <script>
+        let viewer = $3Dmol.createViewer("viewer", {{backgroundColor: "white"}});
+        viewer.addModel(`{pdb_string}`, "pdb");
+        viewer.setStyle({styles[style]});
+        viewer.zoomTo();
+        viewer.render();
+    </script>
+    """
+
+    components.html(html, height=500)
 
 # =============================
 # GEOMETRY
@@ -84,214 +93,77 @@ nonbonded_df = load_uploaded(st.sidebar.file_uploader("Nonbonded CSV")) or nonbo
 def distance(a, b):
     return np.linalg.norm(a - b)
 
-def angle(a, b, c):
-    ba, bc = a - b, c - b
-    return np.degrees(np.arccos(np.clip(np.dot(ba, bc) /
-           (np.linalg.norm(ba) * np.linalg.norm(bc)), -1, 1)))
-
-def torsion(p1, p2, p3, p4):
-    b1, b2, b3 = p2-p1, p3-p2, p4-p3
-    n1, n2 = np.cross(b1, b2), np.cross(b2, b3)
-    n1 /= np.linalg.norm(n1)
-    n2 /= np.linalg.norm(n2)
-    return np.degrees(np.arctan2(
-        np.dot(np.cross(n1, n2), b2/np.linalg.norm(b2)),
-        np.dot(n1, n2)
-    ))
-
-# =============================
-# AUTO BONDS
-# =============================
-def detect_bonds(coords, cutoff=1.8):
-    bonds = []
-    for i in range(len(coords)):
-        for j in range(i + 1, len(coords)):
-            if distance(coords[i], coords[j]) < cutoff:
-                bonds.append((i, j))
-    return bonds
-
-# =============================
-# NEIGHBOR LIST
-# =============================
-def build_neighbor_list(coords, cutoff=8.0):
-    pairs = []
-    for i in range(len(coords)):
-        for j in range(i + 1, len(coords)):
-            if distance(coords[i], coords[j]) < cutoff:
-                pairs.append((i, j))
-    return pairs
-
-# =============================
-# CHARGES
-# =============================
-def assign_charges(atoms):
-    charges = []
-    for atom in atoms:
-        element = atom.element.strip()
-        charge_map = {"O": -0.5, "N": -0.3, "C": 0.2, "H": 0.1, "S": -0.2}
-        charges.append(charge_map.get(element, 0.0))
-    return np.array(charges)
+def detect_bonds(coords):
+    return [(i, j) for i in range(len(coords))
+            for j in range(i+1, len(coords))
+            if distance(coords[i], coords[j]) < 1.8]
 
 # =============================
 # ENERGY
 # =============================
-def compute_energy(coords, atoms=None):
-
-    E_bond = E_angle = E_dihedral = E_vdw = E_coulomb = 0.0
-
-    # Bonds
-    if bonds_df is not None:
-        for _, row in bonds_df.iterrows():
-            i, j = int(row['i']), int(row['j'])
-            k = row.get('k', 300)
-            r0 = row.get('r0', 1.5)
-            r = distance(coords[i], coords[j])
-            E_bond += k * (r - r0) ** 2
-    else:
-        for i, j in detect_bonds(coords):
-            r = distance(coords[i], coords[j])
-            E_bond += 300 * (r - 1.5) ** 2
-
-    # Angles
-    if angles_df is not None:
-        for _, row in angles_df.iterrows():
-            i, j, k_idx = int(row['i']), int(row['j']), int(row['k'])
-            theta = angle(coords[i], coords[j], coords[k_idx])
-            E_angle += 40 * (theta - 109.5) ** 2
-
-    # Dihedrals
-    if dihedrals_df is not None:
-        for _, row in dihedrals_df.iterrows():
-            i, j, k_idx, l = map(int, [row['i'], row['j'], row['k'], row['l']])
-            phi = torsion(coords[i], coords[j], coords[k_idx], coords[l])
-            E_dihedral += 1 * (1 + np.cos(np.radians(3 * phi)))
-
-    # Nonbonded
-    pairs = build_neighbor_list(coords)
-    charges = assign_charges(atoms) if atoms else np.zeros(len(coords))
-
-    for i, j in pairs:
-        r = distance(coords[i], coords[j]) + 1e-6
-        vdw = 4 * 0.2 * ((3.5/r)**12 - (3.5/r)**6)
-        coulomb = (charges[i] * charges[j]) / r
-        E_vdw += vdw
-        E_coulomb += coulomb
-
-    total = E_bond + E_angle + E_dihedral + E_vdw + E_coulomb
-
-    return {
-        "Bond": E_bond,
-        "Angle": E_angle,
-        "Dihedral": E_dihedral,
-        "Van der Waals": E_vdw,
-        "Coulomb": E_coulomb,
-        "Total": total
-    }
-
-# =============================
-# MD ENGINE
-# =============================
-def compute_forces(coords):
-    forces = np.zeros_like(coords)
-    for i in range(len(coords)):
-        for j in range(i + 1, len(coords)):
-            r_vec = coords[i] - coords[j]
-            r = np.linalg.norm(r_vec) + 1e-6
-            f = (1 / r**2) * (r_vec / r)
-            forces[i] += f
-            forces[j] -= f
-    return forces
-
-def velocity_verlet(coords, velocities, dt=0.001):
-    f = compute_forces(coords)
-    coords += velocities * dt + 0.5 * f * dt**2
-    f_new = compute_forces(coords)
-    velocities += 0.5 * (f + f_new) * dt
-    return coords, velocities
-
-# =============================
-# PARAMETER LEARNING
-# =============================
-def fit_bond_k(coords):
-    k = 300.0
+def compute_energy(coords):
+    E = 0
     bonds = detect_bonds(coords)
 
-    for _ in range(100):
-        grad = sum(2 * (distance(coords[i], coords[j]) - 1.5)**2 for i, j in bonds)
-        k -= 1e-5 * grad
+    for i, j in bonds:
+        r = distance(coords[i], coords[j])
+        E += 300 * (r - 1.5) ** 2
 
-    return k
-
-# =============================
-# 3D VIEW
-# =============================
-def show_3d(pdb_string):
-    view = py3Dmol.view(width=600, height=400)
-    view.addModel(pdb_string, "pdb")
-    view.setStyle({"stick": {}})
-    view.zoomTo()
-    return view.show()
+    return E
 
 # =============================
-# SIDEBAR
+# MAIN PAGES
 # =============================
-st.sidebar.title("🧭 Control Panel")
 
-dataset = st.sidebar.selectbox("Dataset", ["PDB", "DNA", "Force Field", "Ligand"])
-mode = st.sidebar.selectbox("Mode", ["Structure", "Energy", "Simulation", "Explorer"])
+if page == "Theory":
+    st.title("📘 Theory")
+    st.write("Molecular mechanics, force fields, MD basics.")
 
-# =============================
-# MAIN
-# =============================
-st.title("🧬 Biomolecular Teaching Platform")
+elif page == "Dataset":
+    st.title("📂 Dataset")
+    st.write("Upload and explore molecular datasets.")
 
-if dataset in ["PDB", "DNA"]:
-    folder = "data/proteins" if dataset == "PDB" else "data/dna"
-    files = os.listdir(folder) if os.path.exists(folder) else []
+elif page == "Simulation":
+    st.title("⚙ Simulation")
 
-    if files:
-        file = st.selectbox("Select file", files)
+    if pdb_file:
+        pdb_data = pdb_file.read().decode("utf-8")
+
         parser = PDBParser(QUIET=True)
-        structure = parser.get_structure("x", os.path.join(folder, file))
-
+        structure = parser.get_structure("mol", StringIO(pdb_data))
         atoms = list(structure.get_atoms())
         coords = np.array([a.get_coord() for a in atoms])
 
-        if mode == "Structure":
-            with open(os.path.join(folder, file)) as f:
-                show_3d(f.read())
+        st.success(f"{len(coords)} atoms loaded")
 
-        elif mode == "Energy":
-            energy = compute_energy(coords, atoms)
-            st.metric("Total Energy", f"{energy['Total']:.2f}")
+        style = st.selectbox("Style", ["stick", "sphere", "cartoon"])
+        show_3d(pdb_data, style)
 
-            fig, ax = plt.subplots()
-            ax.bar(list(energy.keys())[:-1], list(energy.values())[:-1])
-            st.pyplot(fig)
+        if st.button("Compute Energy"):
+            E = compute_energy(coords)
+            st.metric("Energy", f"{E:.2f}")
 
-        elif mode == "Simulation":
-            if "vel" not in st.session_state:
-                st.session_state.vel = np.zeros_like(coords)
+    else:
+        st.info("Upload a PDB file")
 
-            if st.button("Run MD Step"):
-                coords, st.session_state.vel = velocity_verlet(coords, st.session_state.vel)
-                st.success("Step done")
+elif page == "Assignment":
+    st.title("📝 Assignment")
+    st.write("Student tasks and exercises.")
 
-        elif mode == "Explorer":
-            if st.button("Learn Bond Parameter"):
-                k = fit_bond_k(coords)
-                st.success(f"Learned k: {k:.2f}")
+elif page == "Quiz":
+    st.title("❓ Quiz")
+    st.write("Interactive MCQs.")
 
-elif dataset == "Force Field":
-    st.dataframe(atoms_df)
+elif page == "Analytics":
+    st.title("📊 Analytics")
+    st.write("Performance tracking.")
 
-elif dataset == "Ligand":
-    smiles = st.text_input("SMILES", "CCO")
-    tokens = re.findall(r'[A-Z][a-z]?', smiles)
-    st.write("Atoms:", tokens)
+elif page == "Structure Analysis":
+    st.title("🧬 Structure Analysis")
+    st.write("Advanced structural metrics (RMSD, etc.)")
 
 # =============================
 # FOOTER
 # =============================
 st.markdown("---")
-st.markdown("🔬 Full Molecular Mechanics Platform")
+st.markdown("🔬 Biomolecular Teaching Platform | Clean Version")
