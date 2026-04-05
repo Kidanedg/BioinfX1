@@ -1,0 +1,4 @@
+atom1,atom2,atom3,atom4,dihedral_type,Vn,gamma,n,functional_form
+H,C,C,H,rotational,0.15,0.0,3,cosine
+C,C,C,C,planar,0.20,180.0,2,cosine
+H,C,N,H,amide,0.25,180.0,2,cosine
