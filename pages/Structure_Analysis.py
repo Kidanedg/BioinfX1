@@ -4,16 +4,24 @@ import pandas as pd
 import py3Dmol
 
 # =========================================================
-# 🔬 SCIENTIFIC LIBRARIES
+# 🔬 SAFE IMPORTS
 # =========================================================
 from Bio.PDB import PDBParser, DSSP
-from pdbfixer import PDBFixer
+
+# Optional import (CRITICAL FIX)
+try:
+    from pdbfixer import PDBFixer
+    PDBFIXER_AVAILABLE = True
+except ModuleNotFoundError:
+    PDBFIXER_AVAILABLE = False
+
+# OpenMM
 from openmm.app import *
 from openmm import *
 from openmm.unit import *
 
 # =========================================================
-# 🔥 SESSION STATE INITIALIZATION
+# 🔥 SESSION STATE
 # =========================================================
 default_state = {
     "coords": None,
@@ -32,36 +40,34 @@ for key, value in default_state.items():
         st.session_state[key] = value
 
 # =========================================================
-# 🎯 APP TITLE
+# 🎯 TITLE
 # =========================================================
-st.title("🧬 Molecular Structure Analyzer (Advanced)")
+st.title("🧬 Molecular Structure Analyzer (Stable Version)")
 
 # =========================================================
-# 📂 FILE UPLOAD
+# 📂 UPLOAD
 # =========================================================
 uploaded_file = st.file_uploader("Upload PDB file", type=["pdb"])
 
-if uploaded_file is not None:
+if uploaded_file:
     st.session_state.pdb_file = uploaded_file
 
     with open("temp.pdb", "wb") as f:
         f.write(uploaded_file.read())
 
-    st.success("PDB file uploaded successfully!")
+    st.success("PDB uploaded!")
 
 # =========================================================
 # 🧪 PARSE STRUCTURE
 # =========================================================
-if st.session_state.pdb_file is not None:
-
-    parser = PDBParser(QUIET=True)
+if st.session_state.pdb_file:
 
     try:
+        parser = PDBParser(QUIET=True)
         structure = parser.get_structure("protein", "temp.pdb")
         st.session_state.structure = structure
 
-        coords = []
-        elements = []
+        coords, elements = [], []
 
         for atom in structure.get_atoms():
             coords.append(atom.get_coord())
@@ -70,7 +76,7 @@ if st.session_state.pdb_file is not None:
         st.session_state.coords = np.array(coords)
         st.session_state.elements = elements
 
-        st.success(f"Structure parsed! Total atoms: {len(coords)}")
+        st.success(f"Parsed successfully! Atoms: {len(coords)}")
 
     except Exception as e:
         st.error(f"Parsing error: {e}")
@@ -78,10 +84,10 @@ if st.session_state.pdb_file is not None:
 # =========================================================
 # 🧬 3D VIEWER
 # =========================================================
-st.subheader("🧬 3D Molecular Viewer")
+st.subheader("🧬 3D Viewer")
 
-if st.session_state.pdb_file is not None:
-    with open("temp.pdb", "r") as f:
+if st.session_state.pdb_file:
+    with open("temp.pdb") as f:
         pdb_data = f.read()
 
     view = py3Dmol.view(width=700, height=500)
@@ -93,86 +99,102 @@ if st.session_state.pdb_file is not None:
     st.components.v1.html(view._make_html(), height=500)
 
 # =========================================================
-# 🔧 FIX STRUCTURE
+# 🔧 FIX STRUCTURE (SAFE)
 # =========================================================
 if st.button("Fix Structure"):
 
-    try:
-        fixer = PDBFixer(filename="temp.pdb")
+    if not PDBFIXER_AVAILABLE:
+        st.error("❌ pdbfixer not installed. Skipping fixing step.")
+    else:
+        try:
+            fixer = PDBFixer(filename="temp.pdb")
 
-        fixer.findMissingResidues()
-        fixer.findMissingAtoms()
-        fixer.addMissingAtoms()
-        fixer.addMissingHydrogens(pH=7.0)
+            fixer.findMissingResidues()
+            fixer.findMissingAtoms()
+            fixer.addMissingAtoms()
+            fixer.addMissingHydrogens(pH=7.0)
 
-        st.session_state.fixer = fixer
-        st.session_state.topology = fixer.topology
+            st.session_state.fixer = fixer
+            st.session_state.topology = fixer.topology
 
-        st.success("Structure fixed!")
+            st.success("Structure fixed!")
 
-    except Exception as e:
-        st.error(f"Fix error: {e}")
+        except Exception as e:
+            st.error(f"Fix error: {e}")
 
 # =========================================================
 # ⚡ BUILD SYSTEM
 # =========================================================
-if st.button("Build Simulation System"):
+if st.button("Build System"):
 
     try:
-        if st.session_state.fixer is None:
-            st.warning("Fix structure first!")
-        else:
-            forcefield = ForceField('amber14-all.xml', 'amber14/tip3pfb.xml')
+        from openmm.app import PDBFile
+        pdb = PDBFile("temp.pdb")
 
-            system = forcefield.createSystem(
-                st.session_state.fixer.topology,
-                nonbondedMethod=NoCutoff,
-                constraints=HBonds
-            )
+        topology = (
+            st.session_state.fixer.topology
+            if st.session_state.fixer else pdb.topology
+        )
 
-            st.session_state.system = system
-            st.success("System built!")
+        forcefield = ForceField('amber14-all.xml', 'amber14/tip3pfb.xml')
+
+        system = forcefield.createSystem(
+            topology,
+            nonbondedMethod=NoCutoff,
+            constraints=HBonds
+        )
+
+        st.session_state.system = system
+        st.success("System built!")
 
     except Exception as e:
         st.error(f"System error: {e}")
 
 # =========================================================
-# ▶️ RUN SIMULATION + ENERGY TRACKING
+# ▶️ SIMULATION
 # =========================================================
-if st.button("Run Energy Minimization"):
+if st.button("Run Simulation"):
 
     try:
         if st.session_state.system is None:
             st.warning("Build system first!")
         else:
+            from openmm.app import PDBFile
+            pdb = PDBFile("temp.pdb")
+
             integrator = LangevinIntegrator(
                 300*kelvin,
                 1/picosecond,
                 0.002*picoseconds
             )
 
+            if st.session_state.fixer:
+                topology = st.session_state.fixer.topology
+                positions = st.session_state.fixer.positions
+            else:
+                topology = pdb.topology
+                positions = pdb.positions
+
             simulation = Simulation(
-                st.session_state.fixer.topology,
+                topology,
                 st.session_state.system,
                 integrator
             )
 
-            simulation.context.setPositions(
-                st.session_state.fixer.positions
-            )
+            simulation.context.setPositions(positions)
 
             energies = []
 
             for i in range(50):
                 simulation.step(10)
                 state = simulation.context.getState(getEnergy=True)
-                energy = state.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
-                energies.append(energy)
+                e = state.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
+                energies.append(e)
 
             st.session_state.simulation = simulation
             st.session_state.energies = energies
 
-            st.success("Simulation completed!")
+            st.success("Simulation complete!")
 
     except Exception as e:
         st.error(f"Simulation error: {e}")
@@ -180,23 +202,23 @@ if st.button("Run Energy Minimization"):
 # =========================================================
 # 📉 ENERGY PLOT
 # =========================================================
-if st.session_state.energies is not None:
+if st.session_state.energies:
 
     st.subheader("📉 Energy vs Step")
 
-    df_energy = pd.DataFrame({
+    df = pd.DataFrame({
         "Step": range(len(st.session_state.energies)),
         "Energy": st.session_state.energies
     })
 
-    st.line_chart(df_energy.set_index("Step"))
+    st.line_chart(df.set_index("Step"))
 
 # =========================================================
-# 🧪 FORCE FIELD INSPECTION
+# 🧪 FORCE FIELD
 # =========================================================
-st.subheader("🧪 Force Field Parameters")
+st.subheader("🧪 Force Field")
 
-if st.session_state.system is not None:
+if st.session_state.system:
 
     system = st.session_state.system
 
@@ -205,62 +227,41 @@ if st.session_state.system is not None:
 
     for i in range(system.getNumForces()):
         force = system.getForce(i)
-        st.write(f"🔹 {i}: {type(force).__name__}")
-
-        if isinstance(force, HarmonicBondForce):
-            st.write(f"  Bonds: {force.getNumBonds()}")
-
-        elif isinstance(force, HarmonicAngleForce):
-            st.write(f"  Angles: {force.getNumAngles()}")
-
-        elif isinstance(force, PeriodicTorsionForce):
-            st.write(f"  Torsions: {force.getNumTorsions()}")
-
-        elif isinstance(force, NonbondedForce):
-            st.write(f"  Nonbonded particles: {force.getNumParticles()}")
+        st.write(f"{i}: {type(force).__name__}")
 
 # =========================================================
-# 📊 DSSP SECONDARY STRUCTURE
+# 📊 DSSP
 # =========================================================
 st.subheader("📊 DSSP Secondary Structure")
 
-if st.session_state.structure is not None:
+if st.session_state.structure:
 
     try:
         model = st.session_state.structure[0]
         dssp = DSSP(model, "temp.pdb")
 
         data = []
-        for key in dssp.keys():
-            res = dssp[key]
+        for k in dssp.keys():
+            res = dssp[k]
             data.append({
-                "Chain": key[0],
-                "Residue": key[1][1],
+                "Residue": k[1][1],
                 "AA": res[1],
                 "Structure": res[2]
             })
 
         df = pd.DataFrame(data)
-
         st.dataframe(df)
 
-        st.write("Structure distribution:")
-        st.write(df["Structure"].value_counts())
-
-    except Exception:
-        st.warning("DSSP not installed. Install with: conda install -c salilab dssp")
+    except:
+        st.warning("DSSP not installed")
 
 # =========================================================
-# 📊 BASIC COORDINATE ANALYSIS
+# 📊 COORDINATES
 # =========================================================
 if st.session_state.coords is not None:
 
-    st.subheader("📊 Coordinate Summary")
+    st.subheader("📊 Coordinates")
 
-    df = pd.DataFrame(
-        st.session_state.coords,
-        columns=["X", "Y", "Z"]
-    )
-
+    df = pd.DataFrame(st.session_state.coords, columns=["X", "Y", "Z"])
     st.dataframe(df.head())
     st.write(df.describe())
