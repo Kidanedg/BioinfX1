@@ -6,21 +6,18 @@ import re
 import py3Dmol
 
 # =============================
-# SAFE BIOPYTHON IMPORT
+# SAFE IMPORT
 # =============================
 try:
     from Bio.PDB import PDBParser
-except ImportError:
-    st.error("Biopython not installed. Add it to requirements.txt")
+except:
+    st.error("Install Biopython")
     st.stop()
 
-# =============================
-# PAGE CONFIG
-# =============================
-st.set_page_config(page_title="Biomolecular Teaching Platform", layout="wide")
+st.set_page_config(page_title="Biomolecular Platform", layout="wide")
 
 # =============================
-# LOGIN SYSTEM
+# LOGIN
 # =============================
 USERS = {"student": "1234", "admin": "admin"}
 
@@ -29,263 +26,166 @@ if "logged_in" not in st.session_state:
 
 if not st.session_state.logged_in:
     st.title("🔐 Login")
-
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if USERS.get(username) == password:
+        if USERS.get(u) == p:
             st.session_state.logged_in = True
-            st.session_state.user = username
-            st.success("Login successful")
         else:
-            st.error("Invalid credentials")
+            st.error("Wrong login")
     st.stop()
 
 # =============================
-# LOAD DATASETS
+# LOAD FORCE FIELD
 # =============================
 @st.cache_data
-def load_data():
+def load_ff():
     try:
-        def load_csv(path):
-            df = pd.read_csv(path, encoding="utf-8-sig")
+        def load_csv(p):
+            df = pd.read_csv(p, encoding="utf-8-sig")
             df.columns = df.columns.str.strip().str.lower()
             return df
 
-        atoms = load_csv("data/atoms.csv")
-        bonds = load_csv("data/bonds.csv")
-        angles = load_csv("data/angles.csv")
-        dihedrals = load_csv("data/dihedrals.csv")
-        nonbonded = load_csv("data/nonbonded.csv")
-
-        # Ensure numeric
-        for col in ["mass", "charge", "sigma", "epsilon"]:
-            if col in atoms.columns:
-                atoms[col] = pd.to_numeric(atoms[col], errors="coerce")
-
-        return atoms, bonds, angles, dihedrals, nonbonded
-
-    except Exception as e:
-        st.error(f"Dataset error: {e}")
+        return (
+            load_csv("data/atoms.csv"),
+            load_csv("data/bonds.csv"),
+            load_csv("data/angles.csv"),
+            load_csv("data/dihedrals.csv"),
+            load_csv("data/nonbonded.csv"),
+        )
+    except:
         return None, None, None, None, None
 
-atoms_df, bonds_df, angles_df, dihedrals_df, nonbonded_df = load_data()
-
-if atoms_df is None:
-    st.stop()
+atoms_df, bonds_df, angles_df, dihedrals_df, nonbonded_df = load_ff()
 
 # =============================
 # UTILITIES
 # =============================
-def safe_listdir(path):
-    return os.listdir(path) if os.path.exists(path) else []
+def distance(a,b): return np.linalg.norm(a-b)
 
-def distance(a, b):
-    return np.linalg.norm(a - b)
+def angle(a,b,c):
+    ba, bc = a-b, c-b
+    return np.degrees(np.arccos(np.clip(np.dot(ba,bc)/(np.linalg.norm(ba)*np.linalg.norm(bc)), -1,1)))
 
-def angle(a, b, c):
-    ba = a - b
-    bc = c - b
-    cos_theta = np.dot(ba, bc) / (np.linalg.norm(ba)*np.linalg.norm(bc))
-    return np.degrees(np.arccos(np.clip(cos_theta, -1, 1)))
-
-def torsion(p1, p2, p3, p4):
-    b1 = p2 - p1
-    b2 = p3 - p2
-    b3 = p4 - p3
-
-    n1 = np.cross(b1, b2)
-    n2 = np.cross(b2, b3)
-
-    n1 /= np.linalg.norm(n1)
-    n2 /= np.linalg.norm(n2)
-
-    x = np.dot(n1, n2)
-    y = np.dot(np.cross(n1, n2), b2/np.linalg.norm(b2))
-
-    return np.degrees(np.arctan2(y, x))
+def torsion(p1,p2,p3,p4):
+    b1,b2,b3 = p2-p1,p3-p2,p4-p3
+    n1,n2 = np.cross(b1,b2), np.cross(b2,b3)
+    n1/=np.linalg.norm(n1); n2/=np.linalg.norm(n2)
+    return np.degrees(np.arctan2(np.dot(np.cross(n1,n2), b2/np.linalg.norm(b2)), np.dot(n1,n2)))
 
 # =============================
-# LIGAND MODEL
+# ENERGY
 # =============================
-def ligand_properties(smiles):
-    weights = {"C":12,"H":1,"O":16,"N":14,"S":32}
-    tokens = re.findall(r'[A-Z][a-z]?', smiles)
-    mw = sum(weights.get(t, 0) for t in tokens)
-    logp = len(tokens) * 0.15
-    return mw, logp
+def compute_energy(coords):
 
-# =============================
-# ENERGY FUNCTION (IMPROVED)
-# =============================
-def compute_energy(coords, atom_types):
+    E = 0
+    for i in range(len(coords)-1):
+        r = distance(coords[i], coords[i+1])
+        E += 300*(r-1.5)**2
 
-    bond_energy = angle_energy = dihedral_energy = vdw_energy = elec_energy = 0
-
-    charge_map = dict(zip(atoms_df["atom_type"], atoms_df["charge"])) if "charge" in atoms_df else {}
-
-    lj_map = dict(zip(
-        nonbonded_df["atom_type"],
-        zip(nonbonded_df["sigma"], nonbonded_df["epsilon"])
-    )) if nonbonded_df is not None else {}
-
-    # -----------------
-    # BONDS
-    # -----------------
-    if bonds_df is not None and "k" in bonds_df:
-        for i in range(len(coords)-1):
-            r = distance(coords[i], coords[i+1])
-            k = bonds_df["k"].iloc[0]
-            r0 = bonds_df["r0"].iloc[0]
-            bond_energy += k * (r - r0)**2
-
-    # -----------------
-    # ANGLES
-    # -----------------
-    if angles_df is not None and "k" in angles_df:
-        for i in range(len(coords)-2):
-            theta = angle(coords[i], coords[i+1], coords[i+2])
-            k = angles_df["k"].iloc[0]
-            theta0 = angles_df["theta0"].iloc[0]
-            angle_energy += k * (theta - theta0)**2
-
-    # -----------------
-    # DIHEDRALS
-    # -----------------
-    if dihedrals_df is not None and "vn" in dihedrals_df:
-        for i in range(len(coords)-3):
-            phi = torsion(coords[i], coords[i+1], coords[i+2], coords[i+3])
-            Vn = dihedrals_df["vn"].iloc[0]
-            gamma = dihedrals_df["gamma"].iloc[0]
-            n = dihedrals_df["n"].iloc[0]
-            dihedral_energy += Vn * (1 + np.cos(np.radians(n*phi - gamma)))
-
-    # -----------------
-    # NONBONDED (FIXED BUG)
-    # -----------------
-    for i in range(len(coords)):
-        for j in range(i+2, len(coords)):
-            r = distance(coords[i], coords[j])
-            if r < 8:
-                at_i = atom_types[i]
-                at_j = atom_types[j]
-
-                sigma, epsilon = lj_map.get(at_i, (3.5, 0.2))
-                vdw_energy += 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
-
-                qi = charge_map.get(at_i, 0)
-                qj = charge_map.get(at_j, 0)  # ✅ FIXED
-                elec_energy += (qi * qj) / (r + 1e-6)
-
-    total = bond_energy + angle_energy + dihedral_energy + vdw_energy + elec_energy
-
-    return {
-        "Bond": bond_energy,
-        "Angle": angle_energy,
-        "Dihedral": dihedral_energy,
-        "vdW": vdw_energy,
-        "Electrostatic": elec_energy,
-        "Total": total
-    }
+    return E
 
 # =============================
-# UI
+# 3D VIEWER
 # =============================
+def show_3d(pdb_string):
+    view = py3Dmol.view(width=600, height=400)
+    view.addModel(pdb_string, "pdb")
+    view.setStyle({"stick":{}})
+    view.zoomTo()
+    return view.show()
+
+# =============================
+# SIDEBAR NAVIGATION
+# =============================
+st.sidebar.title("🧭 Control Panel")
+
+dataset = st.sidebar.selectbox(
+    "Dataset Type",
+    ["Force Field", "PDB", "DNA", "Ligand"]
+)
+
+mode = st.sidebar.selectbox(
+    "Mode",
+    ["Structure", "Energy", "Simulation", "Explorer"]
+)
+
+# =============================
+# MAIN LOGIC
+# =============================
+
 st.title("🧬 Biomolecular Teaching Platform")
 
-st.sidebar.header("Navigation")
-page = st.sidebar.radio("Go to", ["Structure Analysis", "Force Field Explorer"])
-
 # =============================
-# STRUCTURE ANALYSIS
+# PDB / DNA
 # =============================
-if page == "Structure Analysis":
+if dataset in ["PDB", "DNA"]:
 
-    st.sidebar.header("Structure Config")
-    data_path = "data/proteins"
-
-    files = safe_listdir(data_path)
+    folder = "data/proteins" if dataset=="PDB" else "data/dna"
+    files = os.listdir(folder) if os.path.exists(folder) else []
 
     if not files:
-        st.error("No PDB files found")
-        st.stop()
+        st.warning("No files found")
+    else:
+        file = st.selectbox("Select file", files)
 
-    selected_file = st.sidebar.selectbox("Select File", files)
+        parser = PDBParser(QUIET=True)
+        structure = parser.get_structure("x", os.path.join(folder,file))
 
-    parser = PDBParser(QUIET=True)
+        atoms = list(structure.get_atoms())
+        coords = np.array([a.get_coord() for a in atoms])
 
-    try:
-        structure = parser.get_structure("s", os.path.join(data_path, selected_file))
-    except:
-        st.error("Error loading PDB")
-        st.stop()
+        st.write(f"Atoms: {len(coords)}")
 
-    atoms = list(structure.get_atoms())
-    coords = np.array([a.get_coord() for a in atoms])
+        # -------- STRUCTURE --------
+        if mode == "Structure":
+            with open(os.path.join(folder,file)) as f:
+                pdb_text = f.read()
+            show_3d(pdb_text)
 
-    # =============================
-    # 🔥 FF–PDB AUTO ALIGNMENT
-    # =============================
-    ff = st.session_state.get("ff", None)
+        # -------- ENERGY --------
+        elif mode == "Energy":
+            E = compute_energy(coords)
+            st.metric("Total Energy", f"{E:.2f}")
 
-    if ff:
-        max_index = 0
-        for section in ["bonds", "angles", "dihedrals"]:
-            if section in ff:
-                for row in ff[section]:
-                    indices = [int(x) for x in row[:len(row)-2]]
-                    max_index = max(max_index, max(indices))
+        # -------- SIMULATION --------
+        elif mode == "Simulation":
+            st.info("🚧 Basic MD coming soon")
+            if st.button("Run Step"):
+                coords += np.random.normal(0,0.1,coords.shape)
+                st.success("Step done")
 
-        coords = coords[:max_index+1]
+# =============================
+# LIGAND
+# =============================
+elif dataset == "Ligand":
 
-    st.session_state.coords = coords
-
-    st.write(f"Atoms used: {len(coords)}")
-
-    # =============================
-    # LIGAND INPUT
-    # =============================
     smiles = st.text_input("SMILES", "CCO")
-    mw, logp = ligand_properties(smiles)
-    st.write(f"MW: {mw:.2f} | LogP: {logp:.2f}")
 
-    atom_types = ["C"] * len(coords)
+    tokens = re.findall(r'[A-Z][a-z]?', smiles)
+    mw = len(tokens)*12
+    st.write("Atoms:", tokens)
+    st.write("MW:", mw)
 
-    energy = compute_energy(coords, atom_types)
-
-    st.metric("Total Energy", f"{energy['Total']:.2f}")
+    if mode == "Energy":
+        st.write("Toy energy:", len(tokens)*1.5)
 
 # =============================
-# FORCE FIELD EXPLORER
+# FORCE FIELD
 # =============================
-elif page == "Force Field Explorer":
+elif dataset == "Force Field":
 
-    st.subheader("Force Field Data")
+    tab = st.selectbox("FF Section", ["Atoms","Bonds","Angles","Dihedrals","Nonbonded"])
 
-    tab = st.selectbox("Select", ["Atoms", "Bonds", "Angles", "Dihedrals", "Nonbonded"])
-
-    if tab == "Atoms":
-        st.dataframe(atoms_df)
-
-        if all(c in atoms_df.columns for c in ["mass", "charge"]):
-            chart_df = atoms_df.set_index("atom_type")[["mass", "charge"]]
-            st.bar_chart(chart_df)
-
-    elif tab == "Bonds":
-        st.dataframe(bonds_df)
-
-    elif tab == "Angles":
-        st.dataframe(angles_df)
-
-    elif tab == "Dihedrals":
-        st.dataframe(dihedrals_df)
-
-    elif tab == "Nonbonded":
-        st.dataframe(nonbonded_df)
+    if tab=="Atoms": st.dataframe(atoms_df)
+    elif tab=="Bonds": st.dataframe(bonds_df)
+    elif tab=="Angles": st.dataframe(angles_df)
+    elif tab=="Dihedrals": st.dataframe(dihedrals_df)
+    elif tab=="Nonbonded": st.dataframe(nonbonded_df)
 
 # =============================
 # FOOTER
 # =============================
 st.markdown("---")
-st.markdown("🔬 Full AMBER-style Energy + Teaching Platform")
+st.markdown("🔬 Multi-Dataset Biomolecular Platform (FF + PDB + DNA + Ligands)")
