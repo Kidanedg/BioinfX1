@@ -2,283 +2,160 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 
-# =========================================================
-# 🔥 SESSION STATE INIT (CRITICAL)
-# =========================================================
-if "coords" not in st.session_state:
-    st.session_state.coords = None
+# ================= GPU SUPPORT =================
+try:
+    import cupy as cp
+    xp = cp
+    GPU = True
+except:
+    xp = np
+    GPU = False
 
-if "elements" not in st.session_state:
-    st.session_state.elements = None
+# ================= SESSION =================
+coords = st.session_state.get("coords", None)
+elements = st.session_state.get("elements", None)
 
-# Optional 3D viewer
+st.title("⚙️ Simulation Engine")
+st.sidebar.success(f"GPU Enabled: {GPU}")
+
+if coords is None:
+    st.warning("⚠️ Run Structure Analysis first to load molecule.")
+    st.stop()
+
+coords = xp.array(coords)  # ensure xp type
+N = len(coords)
+
+# ================= PARAMETERS =================
+dt = st.sidebar.slider("Time Step", 0.001, 0.02, 0.005)
+steps = st.sidebar.slider("Steps", 50, 500, 200)
+
+# ================= FORCE FIELD =================
+sigma = 3.5
+epsilon = 0.2
+k_bond = 200
+r0 = 1.5
+
+charges = xp.random.uniform(-0.5, 0.5, N)
+
+# ================= FORCES =================
+def compute_forces(coords):
+    forces = xp.zeros_like(coords)
+
+    # Bond forces
+    for i in range(N - 1):
+        rij = coords[i] - coords[i+1]
+        r = xp.linalg.norm(rij) + 1e-9
+        f = -2 * k_bond * (r - r0) * (rij / r)
+        forces[i] += f
+        forces[i+1] -= f
+
+    # Lennard-Jones
+    for i in range(N):
+        for j in range(i+2, N):
+            rij = coords[i] - coords[j]
+            r = xp.linalg.norm(rij) + 1e-9
+
+            f_mag = 24*epsilon*((2*(sigma**12)/r**13) - ((sigma**6)/r**7))
+            f_vec = f_mag * (rij / r)
+
+            forces[i] += f_vec
+            forces[j] -= f_vec
+
+    return forces
+
+# ================= ENERGY =================
+def compute_energy(coords):
+    E = 0
+
+    for i in range(N-1):
+        r = xp.linalg.norm(coords[i] - coords[i+1])
+        E += k_bond * (r - r0)**2
+
+    for i in range(N):
+        for j in range(i+2, N):
+            r = xp.linalg.norm(coords[i] - coords[j])
+            E += 4*epsilon*((sigma/r)**12 - (sigma/r)**6)
+
+    return float(E)
+
+# ================= MINIMIZATION =================
+def minimize(coords, iterations=100, lr=0.001):
+    coords = coords.copy()
+
+    for _ in range(iterations):
+        forces = compute_forces(coords)
+        coords += lr * forces
+
+    return coords
+
+if st.button("🧘 Energy Minimization"):
+    coords = minimize(coords)
+    st.session_state.coords = coords.get() if GPU else coords
+    st.success("Minimized")
+
+# ================= MD SIM =================
+def run_md(coords):
+    coords = coords.copy()
+    v = xp.random.randn(N,3) * 0.1
+    forces = compute_forces(coords)
+
+    traj = []
+    energies = []
+
+    for _ in range(steps):
+        coords += v*dt + 0.5*forces*dt**2
+        new_forces = compute_forces(coords)
+
+        v += 0.5*(forces + new_forces)*dt
+        forces = new_forces
+
+        # ✅ FIXED HERE
+        if GPU:
+            traj.append(cp.asnumpy(coords))
+        else:
+            traj.append(coords.copy())
+
+        energies.append(compute_energy(coords))
+
+    return traj, energies
+
+# ================= RUN =================
+if st.button("🚀 Run MD Simulation"):
+    traj, energies = run_md(coords)
+
+    st.session_state.traj = traj
+    st.session_state.energies = energies
+
+    st.success("Simulation complete")
+
+# ================= PLOT =================
+if "energies" in st.session_state:
+    st.line_chart(st.session_state.energies)
+
+# ================= VIEW =================
 try:
     import py3Dmol
 except:
     py3Dmol = None
 
-st.title("🧬 Structure Analysis (Advanced)")
-
-# =========================================================
-# 🔹 PDB PARSER (ROBUST)
-# =========================================================
-def parse_pdb(lines):
-    coords, elements, atom_names = [], [], []
-
-    for line in lines:
-        if line.startswith(("ATOM", "HETATM")):
-            try:
-                x = float(line[30:38])
-                y = float(line[38:46])
-                z = float(line[46:54])
-
-                elem = line[76:78].strip()
-                if not elem:
-                    elem = line[12:14].strip()
-
-                coords.append([x, y, z])
-                elements.append(elem if elem else "C")
-                atom_names.append(line[12:16].strip())
-            except:
-                continue
-
-    return np.array(coords), elements, atom_names
-
-
-# =========================================================
-# 🔹 CENTER + NORMALIZE
-# =========================================================
-def center_structure(coords):
-    center = np.mean(coords, axis=0)
-    return coords - center
-
-
-# =========================================================
-# 🔹 DISTANCE MATRIX
-# =========================================================
-def compute_distance_matrix(coords):
-    return np.linalg.norm(coords[:, None] - coords[None, :], axis=2)
-
-
-# =========================================================
-# 🔹 BOND DETECTION
-# =========================================================
-def detect_bonds(coords, threshold=1.8):
-    bonds = []
-    n = len(coords)
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            d = np.linalg.norm(coords[i] - coords[j])
-            if d < threshold:
-                bonds.append((i, j, d))
-
-    return bonds
-
-
-# =========================================================
-# 🔹 ANGLES
-# =========================================================
-def compute_angles(coords, bonds):
-    angles = []
-
-    for i, j, _ in bonds:
-        for k, l, _ in bonds:
-            if j == k and i != l:
-                v1 = coords[i] - coords[j]
-                v2 = coords[l] - coords[j]
-
-                denom = np.linalg.norm(v1) * np.linalg.norm(v2)
-                if denom == 0:
-                    continue
-
-                theta = np.degrees(
-                    np.arccos(np.clip(np.dot(v1, v2) / denom, -1, 1))
-                )
-
-                angles.append((i, j, l, theta))
-
-    return angles
-
-
-# =========================================================
-# 🔹 DIHEDRAL ANGLES (NEW 🔥)
-# =========================================================
-def compute_dihedrals(coords, bonds):
-    dihedrals = []
-
-    for i, j, _ in bonds:
-        for k, l, _ in bonds:
-            if j == k:
-                for m, n, _ in bonds:
-                    if l == m and len({i, j, l, n}) == 4:
-
-                        p0, p1, p2, p3 = coords[i], coords[j], coords[l], coords[n]
-
-                        b0 = -1.0 * (p1 - p0)
-                        b1 = p2 - p1
-                        b2 = p3 - p2
-
-                        b1 /= np.linalg.norm(b1)
-
-                        v = b0 - np.dot(b0, b1) * b1
-                        w = b2 - np.dot(b2, b1) * b1
-
-                        x = np.dot(v, w)
-                        y = np.dot(np.cross(b1, v), w)
-
-                        angle = np.degrees(np.arctan2(y, x))
-
-                        dihedrals.append((i, j, l, n, angle))
-
-    return dihedrals
-
-
-# =========================================================
-# 🔹 FILE INPUT
-# =========================================================
-st.markdown("### 📂 Upload Structure")
-
-uploaded_file = st.file_uploader("Upload PDB file", type=["pdb"])
-
-if uploaded_file:
-    lines = uploaded_file.read().decode("utf-8").splitlines()
-    coords, elements, atom_names = parse_pdb(lines)
-
-    coords = center_structure(coords)
-
-    st.session_state.coords = coords
-    st.session_state.elements = elements
-
-    st.success(f"✅ Loaded {len(coords)} atoms")
-
-
-# =========================================================
-# 🔹 DEMO
-# =========================================================
-st.markdown("### 🧪 Demo Molecule")
-
-if st.button("Load Demo (Helix)"):
-    t = np.linspace(0, 4 * np.pi, 30)
-    coords = np.column_stack((np.cos(t), np.sin(t), t / 2))
-    coords = center_structure(coords)
-
-    elements = ["C"] * len(coords)
-
-    st.session_state.coords = coords
-    st.session_state.elements = elements
-
-    st.success("✅ Demo loaded")
-    st.rerun()
-
-
-# =========================================================
-# 🔹 LOAD SESSION
-# =========================================================
-coords = st.session_state.coords
-elements = st.session_state.elements
-
-if coords is None:
-    st.warning("⚠️ No structure loaded")
-    st.stop()
-
-
-# =========================================================
-# 📊 SUMMARY
-# =========================================================
-st.markdown("### 📊 Structure Summary")
-
-df = pd.DataFrame(coords, columns=["X", "Y", "Z"])
-df["Element"] = elements
-
-st.dataframe(df.head(25))
-st.info(f"Total atoms: {len(coords)}")
-
-st.markdown("### 🧪 Element Distribution")
-st.bar_chart(pd.Series(elements).value_counts())
-
-
-# =========================================================
-# 📏 DISTANCE
-# =========================================================
-st.markdown("### 📏 Distance Matrix")
-
-D = compute_distance_matrix(coords)
-
-if st.checkbox("Show Distance Matrix"):
-    st.dataframe(pd.DataFrame(D).round(2))
-
-
-# =========================================================
-# 🔗 BONDS
-# =========================================================
-st.markdown("### 🔗 Bonds")
-
-threshold = st.slider("Bond Threshold", 1.0, 3.0, 1.8)
-bonds = detect_bonds(coords, threshold)
-
-st.write(f"Detected Bonds: {len(bonds)}")
-
-if st.checkbox("Show Bonds"):
-    st.dataframe(pd.DataFrame(bonds, columns=["i", "j", "Distance"]))
-
-
-# =========================================================
-# 📐 ANGLES
-# =========================================================
-st.markdown("### 📐 Angles")
-
-angles = compute_angles(coords, bonds)
-st.write(f"Angles: {len(angles)}")
-
-if st.checkbox("Show Angles"):
-    st.dataframe(pd.DataFrame(angles, columns=["i", "j", "k", "Angle"]))
-
-
-# =========================================================
-# 🔄 DIHEDRALS
-# =========================================================
-st.markdown("### 🔄 Dihedrals (Torsion)")
-
-dihedrals = compute_dihedrals(coords, bonds)
-st.write(f"Dihedrals: {len(dihedrals)}")
-
-if st.checkbox("Show Dihedrals"):
-    st.dataframe(pd.DataFrame(dihedrals,
-                 columns=["i", "j", "k", "l", "Angle"]))
-
-
-# =========================================================
-# 🎥 3D VIEWER
-# =========================================================
-st.markdown("### 🎥 3D Viewer")
-
-if py3Dmol:
-    style = st.selectbox("Style", ["stick", "sphere", "line"])
-
-    pdb_str = ""
-    for i, (x, y, z) in enumerate(coords):
-        e = elements[i]
-        pdb_str += f"ATOM  {i:5d} {e:>2s} MOL     1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {e:>2s}\n"
-
-    viewer = py3Dmol.view(width=800, height=500)
-    viewer.addModel(pdb_str, "pdb")
-
-    viewer.setStyle({style: {}})
-    viewer.zoomTo()
-
-    st.components.v1.html(viewer._make_html(), height=500)
-else:
-    st.warning("py3Dmol not installed")
-
-
-# =========================================================
-# 🚀 EXPORT
-# =========================================================
-st.markdown("---")
-
-if st.button("🚀 Send to Simulation Engine"):
-    st.session_state.ready_for_sim = True
-    st.success("Sent to Simulation Engine ✅")
-
-st.success("Structure ready ✔")
+if "traj" in st.session_state:
+    frame = st.slider("Frame", 0, len(st.session_state.traj)-1, 0)
+    current = st.session_state.traj[frame]
+
+    if py3Dmol:
+        pdb_str = ""
+        for i,(x,y,z) in enumerate(current):
+            pdb_str += f"ATOM {i:5d} C MOL 1 {x:8.3f}{y:8.3f}{z:8.3f}\n"
+
+        viewer = py3Dmol.view(width=700, height=500)
+        viewer.addModel(pdb_str, "pdb")
+        viewer.setStyle({"stick":{}})
+        viewer.zoomTo()
+
+        st.components.v1.html(viewer._make_html(), height=500)
+
+# ================= METRIC =================
+E = compute_energy(coords)
+st.metric("Energy", f"{E:.3f}")
+
+st.success("🔥 MD Engine Running Successfully")
