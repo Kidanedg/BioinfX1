@@ -1,0 +1,6 @@
+atom_type,element,atomic_number,mass,charge,sigma,epsilon,hybridization,valence,polarizability
+C,C,6,12.01,0.51,3.40,0.1094,sp3,4,1.76
+H,H,1,1.008,0.09,2.50,0.0157,s,1,0.67
+O,O,8,16.00,-0.51,3.00,0.2100,sp2,2,0.80
+N,N,7,14.01,-0.47,3.25,0.1700,sp3,3,1.10
+S,S,16,32.07,-0.23,3.55,0.2500,sp3,2,2.90
