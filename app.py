@@ -41,6 +41,23 @@ if not st.session_state.logged_in:
     st.stop()
 
 # -----------------------------
+# LOAD FORCE FIELD CSV
+# -----------------------------
+DATA_PATH = "data/forcefield_dataset.csv"
+
+@st.cache_data
+def load_forcefield(path):
+    if not os.path.exists(path):
+        return None
+    try:
+        return pd.read_csv(path)
+    except Exception as e:
+        st.error(f"CSV Error: {e}")
+        return None
+
+ff_df = load_forcefield(DATA_PATH)
+
+# -----------------------------
 # UTILITY FUNCTIONS
 # -----------------------------
 def safe_listdir(path):
@@ -56,7 +73,7 @@ def angle(a, b, c):
     return np.degrees(np.arccos(np.clip(cos_theta, -1, 1)))
 
 # -----------------------------
-# SIMPLE LIGAND MODEL (NO RDKit)
+# LIGAND MODEL
 # -----------------------------
 def ligand_properties(smiles):
     weights = {"C":12,"H":1,"O":16,"N":14,"S":32}
@@ -84,25 +101,18 @@ def save_score(user, score):
 # DOCKING FUNCTION
 # -----------------------------
 def docking_score(protein_coords, ligand_coords):
-    vdw = 0
-    elec = 0
-    hbond = 0
-    hydrophobic = 0
-
+    vdw = elec = hbond = hydrophobic = 0
     epsilon = 0.2
     sigma = 3.5
 
     for p in protein_coords:
         for l in ligand_coords:
             r = distance(p, l)
-
             if r < 8:
                 vdw += 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
                 elec += -1 / r
-
                 if 2.5 < r < 3.5:
                     hbond += -1
-
                 if r < 5:
                     hydrophobic += -0.1
 
@@ -110,188 +120,144 @@ def docking_score(protein_coords, ligand_coords):
     return vdw, elec, hbond, hydrophobic, total
 
 # -----------------------------
-# TITLE
+# MAIN TITLE
 # -----------------------------
 st.title("🧬 Biomolecular Teaching Platform (AMBER + Docking + LMS)")
 
 # -----------------------------
-# SIDEBAR
+# SIDEBAR NAVIGATION
 # -----------------------------
-st.sidebar.header("⚙️ Configuration")
+st.sidebar.header("📂 Navigation")
+page = st.sidebar.radio("Go to", ["Structure Analysis", "Force Field Explorer"])
 
-data_type = st.sidebar.selectbox("Dataset Type", ["DNA", "Protein"])
-data_path = "data/dna" if data_type == "DNA" else "data/proteins"
+# =========================================================
+# PAGE 1: STRUCTURE ANALYSIS (YOUR ORIGINAL)
+# =========================================================
+if page == "Structure Analysis":
 
-files = safe_listdir(data_path)
+    st.sidebar.header("⚙️ Structure Config")
+    data_type = st.sidebar.selectbox("Dataset Type", ["DNA", "Protein"])
+    data_path = "data/dna" if data_type == "DNA" else "data/proteins"
 
-if not files:
-    st.error("No PDB files found")
-    st.stop()
+    files = safe_listdir(data_path)
 
-selected_file = st.sidebar.selectbox("Select Structure", files)
+    if not files:
+        st.error("No PDB files found")
+        st.stop()
 
-# -----------------------------
-# LOAD STRUCTURE
-# -----------------------------
-parser = PDBParser(QUIET=True)
+    selected_file = st.sidebar.selectbox("Select Structure", files)
 
-try:
-    structure = parser.get_structure("structure", os.path.join(data_path, selected_file))
-except:
-    st.error("Error loading structure")
-    st.stop()
+    parser = PDBParser(QUIET=True)
 
-atoms = list(structure.get_atoms())
-coords = np.array([atom.get_coord() for atom in atoms])
+    try:
+        structure = parser.get_structure("structure", os.path.join(data_path, selected_file))
+    except:
+        st.error("Error loading structure")
+        st.stop()
 
-st.subheader("📊 Structure Info")
-st.write(f"File: {selected_file}")
-st.write(f"Atoms: {len(atoms)}")
+    atoms = list(structure.get_atoms())
+    coords = np.array([atom.get_coord() for atom in atoms])
 
-# -----------------------------
-# LIGAND INPUT
-# -----------------------------
-st.subheader("💊 Ligand")
+    st.subheader("📊 Structure Info")
+    st.write(f"File: {selected_file}")
+    st.write(f"Atoms: {len(atoms)}")
 
-smiles = st.text_input("Enter SMILES", "CCO")
-mw, logp = ligand_properties(smiles)
+    # -----------------------------
+    # LIGAND
+    # -----------------------------
+    st.subheader("💊 Ligand")
+    smiles = st.text_input("Enter SMILES", "CCO")
+    mw, logp = ligand_properties(smiles)
 
-st.write(f"Estimated Molecular Weight: {mw:.2f}")
-st.write(f"Estimated LogP: {logp:.2f}")
+    st.write(f"MW: {mw:.2f} | LogP: {logp:.2f}")
 
-# -----------------------------
-# STUDENT PREDICTION
-# -----------------------------
-st.subheader("🎓 Assignment")
+    # -----------------------------
+    # ENERGY
+    # -----------------------------
+    st.subheader("⚙️ Energy Calculation")
 
-student_guess = st.number_input("Predict Total Energy", value=0.0)
+    bond_energy = angle_energy = vdw_energy = elec_energy = 0
 
-# -----------------------------
-# ENERGY ENGINE
-# -----------------------------
-st.subheader("⚙️ Energy Calculation")
+    kb, r0 = 300, 1.5
+    k_theta, theta0 = 40, 109.5
+    epsilon, sigma = 0.2, 3.5
 
-bond_energy = 0
-angle_energy = 0
-vdw_energy = 0
-elec_energy = 0
+    if len(coords) > 300:
+        coords = coords[np.random.choice(len(coords), 300, replace=False)]
 
-kb = 300
-r0 = 1.5
-k_theta = 40
-theta0 = 109.5
-epsilon = 0.2
-sigma = 3.5
+    for i in range(len(coords)-1):
+        bond_energy += kb * (distance(coords[i], coords[i+1]) - r0)**2
 
-# Limit size for performance
-if len(coords) > 300:
-    coords = coords[np.random.choice(len(coords), 300, replace=False)]
+    for i in range(len(coords)-2):
+        angle_energy += k_theta * (angle(coords[i], coords[i+1], coords[i+2]) - theta0)**2
 
-# Bonds
-for i in range(len(coords)-1):
-    r = distance(coords[i], coords[i+1])
-    bond_energy += kb * (r - r0)**2
+    for i in range(len(coords)):
+        for j in range(i+2, len(coords)):
+            r = distance(coords[i], coords[j])
+            if r < 8:
+                vdw_energy += 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
+                elec_energy += (-1) / r
 
-# Angles
-for i in range(len(coords)-2):
-    th = angle(coords[i], coords[i+1], coords[i+2])
-    angle_energy += k_theta * (th - theta0)**2
+    total_energy = bond_energy + angle_energy + vdw_energy + elec_energy
 
-# Nonbonded
-for i in range(len(coords)):
-    for j in range(i+2, len(coords)):
-        r = distance(coords[i], coords[j])
-        if r < 8:
-            vdw_energy += 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
-            elec_energy += (-1) / r
+    st.metric("Total Energy", f"{total_energy:.2f}")
 
-total_energy = bond_energy + angle_energy + vdw_energy + elec_energy
+    # -----------------------------
+    # 3D VIEW
+    # -----------------------------
+    st.subheader("🧬 3D Structure")
+    try:
+        with open(os.path.join(data_path, selected_file)) as f:
+            pdb_data = f.read()
 
-# -----------------------------
-# RESULTS
-# -----------------------------
-st.subheader("📊 Energy Results")
+        view = py3Dmol.view(width=700, height=500)
+        view.addModel(pdb_data, "pdb")
+        view.setStyle({"cartoon": {"color": "spectrum"}})
+        view.zoomTo()
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Bond", f"{bond_energy:.2f}")
-col2.metric("Angle", f"{angle_energy:.2f}")
-col3.metric("vdW", f"{vdw_energy:.2f}")
+        st.components.v1.html(view._make_html(), height=500)
+    except:
+        st.error("Visualization failed")
 
-col4, col5 = st.columns(2)
-col4.metric("Electrostatic", f"{elec_energy:.2f}")
-col5.metric("Total Energy", f"{total_energy:.2f}")
+# =========================================================
+# PAGE 2: FORCE FIELD EXPLORER (NEW)
+# =========================================================
+elif page == "Force Field Explorer":
 
-# -----------------------------
-# DOCKING
-# -----------------------------
-st.subheader("🧪 Docking Simulation")
+    st.subheader("🧪 Force Field Dataset")
 
-if st.button("Run Docking"):
-    ligand_coords = coords[:50]
-    vdw, elec, hbond, hydro, dock_total = docking_score(coords, ligand_coords)
+    if ff_df is None:
+        st.error("CSV not found: data/forcefield_dataset.csv")
+        st.stop()
 
-    st.write("### Docking Breakdown")
-    st.write(f"vdW: {vdw:.2f}")
-    st.write(f"Electrostatic: {elec:.2f}")
-    st.write(f"H-bond: {hbond}")
-    st.write(f"Hydrophobic: {hydro:.2f}")
-    st.success(f"Docking Score: {dock_total:.2f}")
+    section = st.selectbox("Select Section", ff_df["section"].dropna().unique())
 
-# -----------------------------
-# STUDENT FEEDBACK
-# -----------------------------
-st.subheader("🎯 Feedback")
+    filtered = ff_df[ff_df["section"] == section]
 
-error = abs(student_guess - total_energy)
-score = max(0, 100 - error)
+    st.dataframe(filtered, use_container_width=True)
 
-st.write(f"Your Prediction: {student_guess}")
-st.write(f"Actual Energy: {total_energy:.2f}")
-st.write(f"Error: {error:.2f}")
-st.write(f"Score: {score:.2f}")
+    # Search
+    col = st.selectbox("Search Column", ff_df.columns)
+    val = st.text_input("Search Value")
 
-if st.button("Submit Score"):
-    save_score(st.session_state.user, score)
-    st.success("Score saved!")
+    if val:
+        filtered = filtered[
+            filtered[col].astype(str).str.contains(val, case=False, na=False)
+        ]
+        st.dataframe(filtered)
 
-# -----------------------------
-# DASHBOARD
-# -----------------------------
-st.subheader("📊 Performance Dashboard")
+    # Charts
+    if section == "ATOM":
+        st.bar_chart(filtered[["mass", "charge"]])
 
-if os.path.exists("scores.csv"):
-    df = pd.read_csv("scores.csv")
-    st.dataframe(df)
-    st.line_chart(df["Score"])
+    elif section == "BOND":
+        st.bar_chart(filtered[["k"]])
 
-# -----------------------------
-# EXPORT
-# -----------------------------
-if os.path.exists("scores.csv"):
-    with open("scores.csv", "rb") as f:
-        st.download_button("Download Scores", f, "scores.csv")
-
-# -----------------------------
-# 3D VISUALIZATION
-# -----------------------------
-st.subheader("🧬 3D Structure")
-
-try:
-    with open(os.path.join(data_path, selected_file)) as f:
-        pdb_data = f.read()
-
-    view = py3Dmol.view(width=700, height=500)
-    view.addModel(pdb_data, "pdb")
-    view.setStyle({"cartoon": {"color": "spectrum"}})
-    view.zoomTo()
-
-    st.components.v1.html(view._make_html(), height=500)
-
-except:
-    st.error("Visualization failed")
+    elif section == "DOCKING":
+        st.bar_chart(filtered.set_index("term")["weight"])
 
 # -----------------------------
 # FOOTER
 # -----------------------------
 st.markdown("---")
-st.markdown("🔬 Full Teaching Platform: Force Fields + Docking + LMS")
+st.markdown("🔬 Integrated Platform: Structure + Force Field + Docking + LMS")
