@@ -38,35 +38,21 @@ if not st.session_state.logged_in:
     st.stop()
 
 # =============================
-# SIDEBAR NAVIGATION
+# SIDEBAR
 # =============================
 st.sidebar.title("📚 Navigation")
 
 page = st.sidebar.radio(
     "Go to",
-    ["Theory", "Dataset", "Simulation", "Assignment", "Quiz", "Analytics", "Structure Analysis"]
+    ["Simulation", "Structure Analysis"]
 )
-
-# =============================
-# FILE UPLOAD
-# =============================
-st.sidebar.markdown("### 📂 Upload Force Field")
-
-atoms_file = st.sidebar.file_uploader("Atoms CSV", type="csv")
-bonds_file = st.sidebar.file_uploader("Bonds CSV", type="csv")
-angles_file = st.sidebar.file_uploader("Angles CSV", type="csv")
-dihedrals_file = st.sidebar.file_uploader("Dihedrals CSV", type="csv")
-nonbonded_file = st.sidebar.file_uploader("Nonbonded CSV", type="csv")
-
-st.sidebar.markdown("### 🧭 Control Panel")
 
 pdb_file = st.sidebar.file_uploader("Upload PDB", type="pdb")
 
 # =============================
-# 3D VIEWER (FIXED)
+# 3D VIEWER
 # =============================
 def show_3d(pdb_string, style="stick"):
-
     styles = {
         "stick": '{"stick":{}}',
         "sphere": '{"sphere":{}}',
@@ -84,7 +70,6 @@ def show_3d(pdb_string, style="stick"):
         viewer.render();
     </script>
     """
-
     components.html(html, height=500)
 
 # =============================
@@ -93,77 +78,115 @@ def show_3d(pdb_string, style="stick"):
 def distance(a, b):
     return np.linalg.norm(a - b)
 
-def detect_bonds(coords):
+def detect_bonds(coords, cutoff=1.8):
     return [(i, j) for i in range(len(coords))
             for j in range(i+1, len(coords))
-            if distance(coords[i], coords[j]) < 1.8]
+            if distance(coords[i], coords[j]) < cutoff]
+
+def neighbor_list(coords, cutoff=8.0):
+    return [(i, j) for i in range(len(coords))
+            for j in range(i+1, len(coords))
+            if distance(coords[i], coords[j]) < cutoff]
 
 # =============================
-# ENERGY
+# CHARGES
 # =============================
-def compute_energy(coords):
-    E = 0
+def assign_charges(atoms):
+    charge_map = {"O": -0.5, "N": -0.3, "C": 0.2, "H": 0.1, "S": -0.2}
+    return np.array([charge_map.get(a.element.strip(), 0.0) for a in atoms])
+
+# =============================
+# ENERGY PIPELINE
+# =============================
+def compute_energy(coords, atoms):
+
     bonds = detect_bonds(coords)
+    pairs = neighbor_list(coords)
+    charges = assign_charges(atoms)
 
+    E_bond = 0
+    E_vdw = 0
+    E_coulomb = 0
+
+    # Bond energy
     for i, j in bonds:
         r = distance(coords[i], coords[j])
-        E += 300 * (r - 1.5) ** 2
+        E_bond += 300 * (r - 1.5)**2
 
-    return E
+    # Nonbonded
+    for i, j in pairs:
+        r = distance(coords[i], coords[j]) + 1e-6
+
+        # Lennard-Jones
+        sigma = 3.5
+        epsilon = 0.2
+        E_vdw += 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
+
+        # Coulomb
+        E_coulomb += (charges[i] * charges[j]) / r
+
+    total = E_bond + E_vdw + E_coulomb
+
+    return bonds, pairs, {
+        "Bond": E_bond,
+        "Van der Waals": E_vdw,
+        "Coulomb": E_coulomb,
+        "Total": total
+    }
 
 # =============================
-# MAIN PAGES
+# MAIN
 # =============================
+if pdb_file:
 
-if page == "Theory":
-    st.title("📘 Theory")
-    st.write("Molecular mechanics, force fields, MD basics.")
+    pdb_data = pdb_file.read().decode("utf-8")
 
-elif page == "Dataset":
-    st.title("📂 Dataset")
-    st.write("Upload and explore molecular datasets.")
+    parser = PDBParser(QUIET=True)
+    structure = parser.get_structure("mol", StringIO(pdb_data))
+    atoms = list(structure.get_atoms())
+    coords = np.array([a.get_coord() for a in atoms])
 
-elif page == "Simulation":
-    st.title("⚙ Simulation")
+    st.success(f"{len(coords)} atoms loaded")
 
-    if pdb_file:
-        pdb_data = pdb_file.read().decode("utf-8")
+    style = st.selectbox("Visualization Style", ["stick", "sphere", "cartoon"])
+    show_3d(pdb_data, style)
 
-        parser = PDBParser(QUIET=True)
-        structure = parser.get_structure("mol", StringIO(pdb_data))
-        atoms = list(structure.get_atoms())
-        coords = np.array([a.get_coord() for a in atoms])
+    # =============================
+    # PIPELINE RUN
+    # =============================
+    if st.button("🚀 Run Interaction Pipeline"):
 
-        st.success(f"{len(coords)} atoms loaded")
+        bonds, pairs, energy = compute_energy(coords, atoms)
 
-        style = st.selectbox("Style", ["stick", "sphere", "cartoon"])
-        show_3d(pdb_data, style)
+        # ENERGY OUTPUT
+        st.subheader("⚡ Energy Results")
+        st.metric("Total Energy (kcal/mol)", f"{energy['Total']:.2f}")
 
-        if st.button("Compute Energy"):
-            E = compute_energy(coords)
-            st.metric("Energy", f"{E:.2f}")
+        # ENERGY PLOT
+        fig, ax = plt.subplots()
+        ax.bar(energy.keys(), energy.values())
+        ax.set_title("Energy Components")
+        st.pyplot(fig)
 
-    else:
-        st.info("Upload a PDB file")
+        # =============================
+        # BOND TABLE
+        # =============================
+        st.subheader("🔗 Bonds Detected")
+        bond_df = pd.DataFrame(bonds, columns=["Atom1", "Atom2"])
+        st.dataframe(bond_df)
 
-elif page == "Assignment":
-    st.title("📝 Assignment")
-    st.write("Student tasks and exercises.")
+        # =============================
+        # INTERACTION TABLE
+        # =============================
+        st.subheader("🌐 Nonbonded Interactions")
+        inter_df = pd.DataFrame(pairs[:200], columns=["Atom1", "Atom2"])
+        st.dataframe(inter_df)
 
-elif page == "Quiz":
-    st.title("❓ Quiz")
-    st.write("Interactive MCQs.")
-
-elif page == "Analytics":
-    st.title("📊 Analytics")
-    st.write("Performance tracking.")
-
-elif page == "Structure Analysis":
-    st.title("🧬 Structure Analysis")
-    st.write("Advanced structural metrics (RMSD, etc.)")
+else:
+    st.info("👈 Upload a PDB file")
 
 # =============================
 # FOOTER
 # =============================
 st.markdown("---")
-st.markdown("🔬 Biomolecular Teaching Platform | Clean Version")
+st.markdown("🔬 Biomolecular Interaction & Energy Platform")
