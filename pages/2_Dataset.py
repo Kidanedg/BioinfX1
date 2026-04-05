@@ -3,14 +3,22 @@ import pandas as pd
 
 st.title("📂 Force Field Dataset Explorer")
 
-with open("forcefield_dataset.txt") as f:
-    lines = f.readlines()
+uploaded_file = st.file_uploader("Upload force field dataset")
 
-st.text_area("Dataset", "".join(lines), height=400)
+if uploaded_file is not None:
+    lines = uploaded_file.read().decode("utf-8").splitlines()
 
-# Convert to DataFrame (simple)
-data = [line.split() for line in lines if not line.startswith("[") and line.strip()]
-df = pd.DataFrame(data)
+    st.text_area("Dataset", "\n".join(lines), height=400)
 
-st.subheader("Preview")
-st.dataframe(df.head(20))
+    data = [
+        line.split()
+        for line in lines
+        if not line.startswith("[") and line.strip()
+    ]
+
+    df = pd.DataFrame(data)
+
+    st.subheader("Preview")
+    st.dataframe(df.head(20))
+else:
+    st.warning("Please upload a dataset file.")
