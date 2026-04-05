@@ -1,6 +1,6 @@
 streamlit
 numpy
 pandas
-biopython
-rdkit
-py3Dmol
+matplotlib
+plotly
+scipy
