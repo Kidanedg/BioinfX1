@@ -5,3 +5,4 @@ biopython
 rdkit
 py3Dmol
 scipy
+matplotlib
