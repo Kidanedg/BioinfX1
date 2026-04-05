@@ -1,0 +1,5 @@
+atom1,atom2,atom3,angle_type,k,theta0,force_type
+H,C,H,tetrahedral,33.0,109.5,harmonic
+H,C,C,tetrahedral,35.0,109.5,harmonic
+C,C,O,trigonal,50.0,120.0,harmonic
+C,N,H,bent,45.0,118.0,harmonic
