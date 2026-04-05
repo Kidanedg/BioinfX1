@@ -5,21 +5,23 @@ import pandas as pd
 import re
 import py3Dmol
 
-# Safe Biopython import
+# =============================
+# SAFE BIOPYTHON IMPORT
+# =============================
 try:
     from Bio.PDB import PDBParser
 except ImportError:
     st.error("Biopython not installed. Add it to requirements.txt")
     st.stop()
 
-# -----------------------------
+# =============================
 # PAGE CONFIG
-# -----------------------------
+# =============================
 st.set_page_config(page_title="Biomolecular Teaching Platform", layout="wide")
 
-# -----------------------------
+# =============================
 # LOGIN SYSTEM
-# -----------------------------
+# =============================
 USERS = {"student": "1234", "admin": "admin"}
 
 if "logged_in" not in st.session_state:
@@ -40,15 +42,15 @@ if not st.session_state.logged_in:
             st.error("Invalid credentials")
     st.stop()
 
-# -----------------------------
-# LOAD DATASETS (FIXED)
-# -----------------------------
+# =============================
+# LOAD DATASETS
+# =============================
 @st.cache_data
 def load_data():
     try:
         def load_csv(path):
-            df = pd.read_csv(path, encoding="utf-8-sig")  # 🔥 fixes BOM issue
-            df.columns = df.columns.str.strip().str.lower()  # 🔥 clean names
+            df = pd.read_csv(path, encoding="utf-8-sig")
+            df.columns = df.columns.str.strip().str.lower()
             return df
 
         atoms = load_csv("data/atoms.csv")
@@ -57,7 +59,7 @@ def load_data():
         dihedrals = load_csv("data/dihedrals.csv")
         nonbonded = load_csv("data/nonbonded.csv")
 
-        # Ensure numeric columns
+        # Ensure numeric
         for col in ["mass", "charge", "sigma", "epsilon"]:
             if col in atoms.columns:
                 atoms[col] = pd.to_numeric(atoms[col], errors="coerce")
@@ -70,13 +72,12 @@ def load_data():
 
 atoms_df, bonds_df, angles_df, dihedrals_df, nonbonded_df = load_data()
 
-# Stop if critical data missing
 if atoms_df is None:
     st.stop()
 
-# -----------------------------
-# UTILITY FUNCTIONS
-# -----------------------------
+# =============================
+# UTILITIES
+# =============================
 def safe_listdir(path):
     return os.listdir(path) if os.path.exists(path) else []
 
@@ -105,9 +106,9 @@ def torsion(p1, p2, p3, p4):
 
     return np.degrees(np.arctan2(y, x))
 
-# -----------------------------
+# =============================
 # LIGAND MODEL
-# -----------------------------
+# =============================
 def ligand_properties(smiles):
     weights = {"C":12,"H":1,"O":16,"N":14,"S":32}
     tokens = re.findall(r'[A-Z][a-z]?', smiles)
@@ -115,19 +116,23 @@ def ligand_properties(smiles):
     logp = len(tokens) * 0.15
     return mw, logp
 
-# -----------------------------
-# ENERGY FUNCTION (SAFE)
-# -----------------------------
+# =============================
+# ENERGY FUNCTION (IMPROVED)
+# =============================
 def compute_energy(coords, atom_types):
 
     bond_energy = angle_energy = dihedral_energy = vdw_energy = elec_energy = 0
 
-    # Safe maps
     charge_map = dict(zip(atoms_df["atom_type"], atoms_df["charge"])) if "charge" in atoms_df else {}
-    lj_map = dict(zip(nonbonded_df["atom_type"],
-                      zip(nonbonded_df["sigma"], nonbonded_df["epsilon"]))) if nonbonded_df is not None else {}
 
+    lj_map = dict(zip(
+        nonbonded_df["atom_type"],
+        zip(nonbonded_df["sigma"], nonbonded_df["epsilon"])
+    )) if nonbonded_df is not None else {}
+
+    # -----------------
     # BONDS
+    # -----------------
     if bonds_df is not None and "k" in bonds_df:
         for i in range(len(coords)-1):
             r = distance(coords[i], coords[i+1])
@@ -135,7 +140,9 @@ def compute_energy(coords, atom_types):
             r0 = bonds_df["r0"].iloc[0]
             bond_energy += k * (r - r0)**2
 
+    # -----------------
     # ANGLES
+    # -----------------
     if angles_df is not None and "k" in angles_df:
         for i in range(len(coords)-2):
             theta = angle(coords[i], coords[i+1], coords[i+2])
@@ -143,7 +150,9 @@ def compute_energy(coords, atom_types):
             theta0 = angles_df["theta0"].iloc[0]
             angle_energy += k * (theta - theta0)**2
 
+    # -----------------
     # DIHEDRALS
+    # -----------------
     if dihedrals_df is not None and "vn" in dihedrals_df:
         for i in range(len(coords)-3):
             phi = torsion(coords[i], coords[i+1], coords[i+2], coords[i+3])
@@ -152,18 +161,22 @@ def compute_energy(coords, atom_types):
             n = dihedrals_df["n"].iloc[0]
             dihedral_energy += Vn * (1 + np.cos(np.radians(n*phi - gamma)))
 
-    # NONBONDED
+    # -----------------
+    # NONBONDED (FIXED BUG)
+    # -----------------
     for i in range(len(coords)):
         for j in range(i+2, len(coords)):
             r = distance(coords[i], coords[j])
             if r < 8:
                 at_i = atom_types[i]
+                at_j = atom_types[j]
+
                 sigma, epsilon = lj_map.get(at_i, (3.5, 0.2))
                 vdw_energy += 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
 
                 qi = charge_map.get(at_i, 0)
-                qj = charge_map.get(at_i, 0)
-                elec_energy += (qi * qj) / r
+                qj = charge_map.get(at_j, 0)  # ✅ FIXED
+                elec_energy += (qi * qj) / (r + 1e-6)
 
     total = bond_energy + angle_energy + dihedral_energy + vdw_energy + elec_energy
 
@@ -176,9 +189,9 @@ def compute_energy(coords, atom_types):
         "Total": total
     }
 
-# -----------------------------
+# =============================
 # UI
-# -----------------------------
+# =============================
 st.title("🧬 Biomolecular Teaching Platform")
 
 st.sidebar.header("Navigation")
@@ -211,13 +224,34 @@ if page == "Structure Analysis":
     atoms = list(structure.get_atoms())
     coords = np.array([a.get_coord() for a in atoms])
 
-    st.write(f"Atoms: {len(coords)}")
+    # =============================
+    # 🔥 FF–PDB AUTO ALIGNMENT
+    # =============================
+    ff = st.session_state.get("ff", None)
 
+    if ff:
+        max_index = 0
+        for section in ["bonds", "angles", "dihedrals"]:
+            if section in ff:
+                for row in ff[section]:
+                    indices = [int(x) for x in row[:len(row)-2]]
+                    max_index = max(max_index, max(indices))
+
+        coords = coords[:max_index+1]
+
+    st.session_state.coords = coords
+
+    st.write(f"Atoms used: {len(coords)}")
+
+    # =============================
+    # LIGAND INPUT
+    # =============================
     smiles = st.text_input("SMILES", "CCO")
     mw, logp = ligand_properties(smiles)
     st.write(f"MW: {mw:.2f} | LogP: {logp:.2f}")
 
     atom_types = ["C"] * len(coords)
+
     energy = compute_energy(coords, atom_types)
 
     st.metric("Total Energy", f"{energy['Total']:.2f}")
@@ -237,9 +271,6 @@ elif page == "Force Field Explorer":
         if all(c in atoms_df.columns for c in ["mass", "charge"]):
             chart_df = atoms_df.set_index("atom_type")[["mass", "charge"]]
             st.bar_chart(chart_df)
-        else:
-            st.error("Columns missing")
-            st.write(atoms_df.columns)
 
     elif tab == "Bonds":
         st.dataframe(bonds_df)
@@ -253,8 +284,8 @@ elif page == "Force Field Explorer":
     elif tab == "Nonbonded":
         st.dataframe(nonbonded_df)
 
-# -----------------------------
+# =============================
 # FOOTER
-# -----------------------------
+# =============================
 st.markdown("---")
-st.markdown("🔬 Full AMBER Energy + Docking + Visualization")
+st.markdown("🔬 Full AMBER-style Energy + Teaching Platform")
