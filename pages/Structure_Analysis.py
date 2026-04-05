@@ -1,161 +1,266 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import py3Dmol
 
-# ================= GPU SUPPORT =================
-try:
-    import cupy as cp
-    xp = cp
-    GPU = True
-except:
-    xp = np
-    GPU = False
+# =========================================================
+# 🔬 SCIENTIFIC LIBRARIES
+# =========================================================
+from Bio.PDB import PDBParser, DSSP
+from pdbfixer import PDBFixer
+from openmm.app import *
+from openmm import *
+from openmm.unit import *
 
-# ================= SESSION =================
-coords = st.session_state.get("coords", None)
-elements = st.session_state.get("elements", None)
+# =========================================================
+# 🔥 SESSION STATE INITIALIZATION
+# =========================================================
+default_state = {
+    "coords": None,
+    "elements": None,
+    "topology": None,
+    "structure": None,
+    "pdb_file": None,
+    "fixer": None,
+    "system": None,
+    "simulation": None,
+    "energies": None
+}
 
-st.title("⚙️ Simulation Engine")
-st.sidebar.success(f"GPU Enabled: {GPU}")
+for key, value in default_state.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
-if coords is None:
-    st.warning("⚠️ Run Structure Analysis first to load molecule.")
-    st.stop()
+# =========================================================
+# 🎯 APP TITLE
+# =========================================================
+st.title("🧬 Molecular Structure Analyzer (Advanced)")
 
-coords = xp.array(coords)  # ensure xp type
-N = len(coords)
+# =========================================================
+# 📂 FILE UPLOAD
+# =========================================================
+uploaded_file = st.file_uploader("Upload PDB file", type=["pdb"])
 
-# ================= PARAMETERS =================
-dt = st.sidebar.slider("Time Step", 0.001, 0.02, 0.005)
-steps = st.sidebar.slider("Steps", 50, 500, 200)
+if uploaded_file is not None:
+    st.session_state.pdb_file = uploaded_file
 
-# ================= FORCE FIELD =================
-sigma = 3.5
-epsilon = 0.2
-k_bond = 200
-r0 = 1.5
+    with open("temp.pdb", "wb") as f:
+        f.write(uploaded_file.read())
 
-charges = xp.random.uniform(-0.5, 0.5, N)
+    st.success("PDB file uploaded successfully!")
 
-# ================= FORCES =================
-def compute_forces(coords):
-    forces = xp.zeros_like(coords)
+# =========================================================
+# 🧪 PARSE STRUCTURE
+# =========================================================
+if st.session_state.pdb_file is not None:
 
-    # Bond forces
-    for i in range(N - 1):
-        rij = coords[i] - coords[i+1]
-        r = xp.linalg.norm(rij) + 1e-9
-        f = -2 * k_bond * (r - r0) * (rij / r)
-        forces[i] += f
-        forces[i+1] -= f
+    parser = PDBParser(QUIET=True)
 
-    # Lennard-Jones
-    for i in range(N):
-        for j in range(i+2, N):
-            rij = coords[i] - coords[j]
-            r = xp.linalg.norm(rij) + 1e-9
+    try:
+        structure = parser.get_structure("protein", "temp.pdb")
+        st.session_state.structure = structure
 
-            f_mag = 24*epsilon*((2*(sigma**12)/r**13) - ((sigma**6)/r**7))
-            f_vec = f_mag * (rij / r)
+        coords = []
+        elements = []
 
-            forces[i] += f_vec
-            forces[j] -= f_vec
+        for atom in structure.get_atoms():
+            coords.append(atom.get_coord())
+            elements.append(atom.element)
 
-    return forces
+        st.session_state.coords = np.array(coords)
+        st.session_state.elements = elements
 
-# ================= ENERGY =================
-def compute_energy(coords):
-    E = 0
+        st.success(f"Structure parsed! Total atoms: {len(coords)}")
 
-    for i in range(N-1):
-        r = xp.linalg.norm(coords[i] - coords[i+1])
-        E += k_bond * (r - r0)**2
+    except Exception as e:
+        st.error(f"Parsing error: {e}")
 
-    for i in range(N):
-        for j in range(i+2, N):
-            r = xp.linalg.norm(coords[i] - coords[j])
-            E += 4*epsilon*((sigma/r)**12 - (sigma/r)**6)
+# =========================================================
+# 🧬 3D VIEWER
+# =========================================================
+st.subheader("🧬 3D Molecular Viewer")
 
-    return float(E)
+if st.session_state.pdb_file is not None:
+    with open("temp.pdb", "r") as f:
+        pdb_data = f.read()
 
-# ================= MINIMIZATION =================
-def minimize(coords, iterations=100, lr=0.001):
-    coords = coords.copy()
+    view = py3Dmol.view(width=700, height=500)
+    view.addModel(pdb_data, "pdb")
+    view.setStyle({"cartoon": {"color": "spectrum"}})
+    view.addStyle({"stick": {}})
+    view.zoomTo()
 
-    for _ in range(iterations):
-        forces = compute_forces(coords)
-        coords += lr * forces
+    st.components.v1.html(view._make_html(), height=500)
 
-    return coords
+# =========================================================
+# 🔧 FIX STRUCTURE
+# =========================================================
+if st.button("Fix Structure"):
 
-if st.button("🧘 Energy Minimization"):
-    coords = minimize(coords)
-    st.session_state.coords = coords.get() if GPU else coords
-    st.success("Minimized")
+    try:
+        fixer = PDBFixer(filename="temp.pdb")
 
-# ================= MD SIM =================
-def run_md(coords):
-    coords = coords.copy()
-    v = xp.random.randn(N,3) * 0.1
-    forces = compute_forces(coords)
+        fixer.findMissingResidues()
+        fixer.findMissingAtoms()
+        fixer.addMissingAtoms()
+        fixer.addMissingHydrogens(pH=7.0)
 
-    traj = []
-    energies = []
+        st.session_state.fixer = fixer
+        st.session_state.topology = fixer.topology
 
-    for _ in range(steps):
-        coords += v*dt + 0.5*forces*dt**2
-        new_forces = compute_forces(coords)
+        st.success("Structure fixed!")
 
-        v += 0.5*(forces + new_forces)*dt
-        forces = new_forces
+    except Exception as e:
+        st.error(f"Fix error: {e}")
 
-        # ✅ FIXED HERE
-        if GPU:
-            traj.append(cp.asnumpy(coords))
+# =========================================================
+# ⚡ BUILD SYSTEM
+# =========================================================
+if st.button("Build Simulation System"):
+
+    try:
+        if st.session_state.fixer is None:
+            st.warning("Fix structure first!")
         else:
-            traj.append(coords.copy())
+            forcefield = ForceField('amber14-all.xml', 'amber14/tip3pfb.xml')
 
-        energies.append(compute_energy(coords))
+            system = forcefield.createSystem(
+                st.session_state.fixer.topology,
+                nonbondedMethod=NoCutoff,
+                constraints=HBonds
+            )
 
-    return traj, energies
+            st.session_state.system = system
+            st.success("System built!")
 
-# ================= RUN =================
-if st.button("🚀 Run MD Simulation"):
-    traj, energies = run_md(coords)
+    except Exception as e:
+        st.error(f"System error: {e}")
 
-    st.session_state.traj = traj
-    st.session_state.energies = energies
+# =========================================================
+# ▶️ RUN SIMULATION + ENERGY TRACKING
+# =========================================================
+if st.button("Run Energy Minimization"):
 
-    st.success("Simulation complete")
+    try:
+        if st.session_state.system is None:
+            st.warning("Build system first!")
+        else:
+            integrator = LangevinIntegrator(
+                300*kelvin,
+                1/picosecond,
+                0.002*picoseconds
+            )
 
-# ================= PLOT =================
-if "energies" in st.session_state:
-    st.line_chart(st.session_state.energies)
+            simulation = Simulation(
+                st.session_state.fixer.topology,
+                st.session_state.system,
+                integrator
+            )
 
-# ================= VIEW =================
-try:
-    import py3Dmol
-except:
-    py3Dmol = None
+            simulation.context.setPositions(
+                st.session_state.fixer.positions
+            )
 
-if "traj" in st.session_state:
-    frame = st.slider("Frame", 0, len(st.session_state.traj)-1, 0)
-    current = st.session_state.traj[frame]
+            energies = []
 
-    if py3Dmol:
-        pdb_str = ""
-        for i,(x,y,z) in enumerate(current):
-            pdb_str += f"ATOM {i:5d} C MOL 1 {x:8.3f}{y:8.3f}{z:8.3f}\n"
+            for i in range(50):
+                simulation.step(10)
+                state = simulation.context.getState(getEnergy=True)
+                energy = state.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
+                energies.append(energy)
 
-        viewer = py3Dmol.view(width=700, height=500)
-        viewer.addModel(pdb_str, "pdb")
-        viewer.setStyle({"stick":{}})
-        viewer.zoomTo()
+            st.session_state.simulation = simulation
+            st.session_state.energies = energies
 
-        st.components.v1.html(viewer._make_html(), height=500)
+            st.success("Simulation completed!")
 
-# ================= METRIC =================
-E = compute_energy(coords)
-st.metric("Energy", f"{E:.3f}")
+    except Exception as e:
+        st.error(f"Simulation error: {e}")
 
-st.success("🔥 MD Engine Running Successfully")
+# =========================================================
+# 📉 ENERGY PLOT
+# =========================================================
+if st.session_state.energies is not None:
+
+    st.subheader("📉 Energy vs Step")
+
+    df_energy = pd.DataFrame({
+        "Step": range(len(st.session_state.energies)),
+        "Energy": st.session_state.energies
+    })
+
+    st.line_chart(df_energy.set_index("Step"))
+
+# =========================================================
+# 🧪 FORCE FIELD INSPECTION
+# =========================================================
+st.subheader("🧪 Force Field Parameters")
+
+if st.session_state.system is not None:
+
+    system = st.session_state.system
+
+    st.write(f"Particles: {system.getNumParticles()}")
+    st.write(f"Forces: {system.getNumForces()}")
+
+    for i in range(system.getNumForces()):
+        force = system.getForce(i)
+        st.write(f"🔹 {i}: {type(force).__name__}")
+
+        if isinstance(force, HarmonicBondForce):
+            st.write(f"  Bonds: {force.getNumBonds()}")
+
+        elif isinstance(force, HarmonicAngleForce):
+            st.write(f"  Angles: {force.getNumAngles()}")
+
+        elif isinstance(force, PeriodicTorsionForce):
+            st.write(f"  Torsions: {force.getNumTorsions()}")
+
+        elif isinstance(force, NonbondedForce):
+            st.write(f"  Nonbonded particles: {force.getNumParticles()}")
+
+# =========================================================
+# 📊 DSSP SECONDARY STRUCTURE
+# =========================================================
+st.subheader("📊 DSSP Secondary Structure")
+
+if st.session_state.structure is not None:
+
+    try:
+        model = st.session_state.structure[0]
+        dssp = DSSP(model, "temp.pdb")
+
+        data = []
+        for key in dssp.keys():
+            res = dssp[key]
+            data.append({
+                "Chain": key[0],
+                "Residue": key[1][1],
+                "AA": res[1],
+                "Structure": res[2]
+            })
+
+        df = pd.DataFrame(data)
+
+        st.dataframe(df)
+
+        st.write("Structure distribution:")
+        st.write(df["Structure"].value_counts())
+
+    except Exception:
+        st.warning("DSSP not installed. Install with: conda install -c salilab dssp")
+
+# =========================================================
+# 📊 BASIC COORDINATE ANALYSIS
+# =========================================================
+if st.session_state.coords is not None:
+
+    st.subheader("📊 Coordinate Summary")
+
+    df = pd.DataFrame(
+        st.session_state.coords,
+        columns=["X", "Y", "Z"]
+    )
+
+    st.dataframe(df.head())
+    st.write(df.describe())
