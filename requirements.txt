@@ -7,3 +7,4 @@ scipy
 biopython
 py3Dmol
 openmm
+reportlab
