@@ -1,0 +1,6 @@
+atom_type,sigma,epsilon,cutoff,combination_rule
+C,3.40,0.1094,8.0,Lorentz-Berthelot
+H,2.50,0.0157,8.0,Lorentz-Berthelot
+O,3.00,0.2100,8.0,Lorentz-Berthelot
+N,3.25,0.1700,8.0,Lorentz-Berthelot
+S,3.55,0.2500,8.0,Lorentz-Berthelot
