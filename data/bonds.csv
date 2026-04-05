@@ -1,0 +1,6 @@
+atom1,atom2,bond_type,bond_order,k,r0,force_type
+C,H,single,1,340.0,1.09,harmonic
+C,C,single,1,310.0,1.53,harmonic
+C,O,double,2,320.0,1.43,harmonic
+C,N,single,1,337.0,1.47,harmonic
+S,H,single,1,250.0,1.34,harmonic
