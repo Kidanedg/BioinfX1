@@ -41,22 +41,38 @@ if not st.session_state.logged_in:
     st.stop()
 
 # -----------------------------
-# LOAD DATASETS
+# LOAD DATASETS (FIXED)
 # -----------------------------
 @st.cache_data
 def load_data():
     try:
-        atoms = pd.read_csv("data/atoms.csv")
-        bonds = pd.read_csv("data/bonds.csv")
-        angles = pd.read_csv("data/angles.csv")
-        dihedrals = pd.read_csv("data/dihedrals.csv")
-        nonbonded = pd.read_csv("data/nonbonded.csv")
+        def load_csv(path):
+            df = pd.read_csv(path, encoding="utf-8-sig")  # 🔥 fixes BOM issue
+            df.columns = df.columns.str.strip().str.lower()  # 🔥 clean names
+            return df
+
+        atoms = load_csv("data/atoms.csv")
+        bonds = load_csv("data/bonds.csv")
+        angles = load_csv("data/angles.csv")
+        dihedrals = load_csv("data/dihedrals.csv")
+        nonbonded = load_csv("data/nonbonded.csv")
+
+        # Ensure numeric columns
+        for col in ["mass", "charge", "sigma", "epsilon"]:
+            if col in atoms.columns:
+                atoms[col] = pd.to_numeric(atoms[col], errors="coerce")
+
         return atoms, bonds, angles, dihedrals, nonbonded
+
     except Exception as e:
         st.error(f"Dataset error: {e}")
         return None, None, None, None, None
 
 atoms_df, bonds_df, angles_df, dihedrals_df, nonbonded_df = load_data()
+
+# Stop if critical data missing
+if atoms_df is None:
+    st.stop()
 
 # -----------------------------
 # UTILITY FUNCTIONS
@@ -100,62 +116,53 @@ def ligand_properties(smiles):
     return mw, logp
 
 # -----------------------------
-# FULL ENERGY FUNCTION
+# ENERGY FUNCTION (SAFE)
 # -----------------------------
 def compute_energy(coords, atom_types):
 
-    bond_energy = 0
-    angle_energy = 0
-    dihedral_energy = 0
-    vdw_energy = 0
-    elec_energy = 0
+    bond_energy = angle_energy = dihedral_energy = vdw_energy = elec_energy = 0
 
-    # Charges
-    charge_map = dict(zip(atoms_df["atom_type"], atoms_df["charge"]))
-
-    # LJ params
+    # Safe maps
+    charge_map = dict(zip(atoms_df["atom_type"], atoms_df["charge"])) if "charge" in atoms_df else {}
     lj_map = dict(zip(nonbonded_df["atom_type"],
-                      zip(nonbonded_df["sigma"], nonbonded_df["epsilon"])))
+                      zip(nonbonded_df["sigma"], nonbonded_df["epsilon"]))) if nonbonded_df is not None else {}
 
-    # ---------------- BONDS ----------------
-    for i in range(len(coords)-1):
-        r = distance(coords[i], coords[i+1])
-        k = bonds_df["k"].iloc[0]
-        r0 = bonds_df["r0"].iloc[0]
-        bond_energy += k * (r - r0)**2
+    # BONDS
+    if bonds_df is not None and "k" in bonds_df:
+        for i in range(len(coords)-1):
+            r = distance(coords[i], coords[i+1])
+            k = bonds_df["k"].iloc[0]
+            r0 = bonds_df["r0"].iloc[0]
+            bond_energy += k * (r - r0)**2
 
-    # ---------------- ANGLES ----------------
-    for i in range(len(coords)-2):
-        theta = angle(coords[i], coords[i+1], coords[i+2])
-        k = angles_df["k"].iloc[0]
-        theta0 = angles_df["theta0"].iloc[0]
-        angle_energy += k * (theta - theta0)**2
+    # ANGLES
+    if angles_df is not None and "k" in angles_df:
+        for i in range(len(coords)-2):
+            theta = angle(coords[i], coords[i+1], coords[i+2])
+            k = angles_df["k"].iloc[0]
+            theta0 = angles_df["theta0"].iloc[0]
+            angle_energy += k * (theta - theta0)**2
 
-    # ---------------- DIHEDRALS ----------------
-    for i in range(len(coords)-3):
-        phi = torsion(coords[i], coords[i+1], coords[i+2], coords[i+3])
-        Vn = dihedrals_df["Vn"].iloc[0]
-        gamma = dihedrals_df["gamma"].iloc[0]
-        n = dihedrals_df["n"].iloc[0]
-        dihedral_energy += Vn * (1 + np.cos(np.radians(n*phi - gamma)))
+    # DIHEDRALS
+    if dihedrals_df is not None and "vn" in dihedrals_df:
+        for i in range(len(coords)-3):
+            phi = torsion(coords[i], coords[i+1], coords[i+2], coords[i+3])
+            Vn = dihedrals_df["vn"].iloc[0]
+            gamma = dihedrals_df["gamma"].iloc[0]
+            n = dihedrals_df["n"].iloc[0]
+            dihedral_energy += Vn * (1 + np.cos(np.radians(n*phi - gamma)))
 
-    # ---------------- NONBONDED ----------------
+    # NONBONDED
     for i in range(len(coords)):
         for j in range(i+2, len(coords)):
-
             r = distance(coords[i], coords[j])
-
             if r < 8:
                 at_i = atom_types[i]
-                at_j = atom_types[j]
-
                 sigma, epsilon = lj_map.get(at_i, (3.5, 0.2))
-
                 vdw_energy += 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
 
                 qi = charge_map.get(at_i, 0)
-                qj = charge_map.get(at_j, 0)
-
+                qj = charge_map.get(at_i, 0)
                 elec_energy += (qi * qj) / r
 
     total = bond_energy + angle_energy + dihedral_energy + vdw_energy + elec_energy
@@ -170,33 +177,20 @@ def compute_energy(coords, atom_types):
     }
 
 # -----------------------------
-# DOCKING
-# -----------------------------
-def docking_score(protein_coords, ligand_coords):
-    score = 0
-    for p in protein_coords:
-        for l in ligand_coords:
-            r = distance(p, l)
-            if r < 8:
-                score += -1/r
-    return score
-
-# -----------------------------
-# MAIN UI
+# UI
 # -----------------------------
 st.title("🧬 Biomolecular Teaching Platform")
 
 st.sidebar.header("Navigation")
 page = st.sidebar.radio("Go to", ["Structure Analysis", "Force Field Explorer"])
 
-# =====================================================
+# =============================
 # STRUCTURE ANALYSIS
-# =====================================================
+# =============================
 if page == "Structure Analysis":
 
     st.sidebar.header("Structure Config")
-    data_type = st.sidebar.selectbox("Dataset", ["DNA", "Protein"])
-    data_path = "data/dna" if data_type == "DNA" else "data/proteins"
+    data_path = "data/proteins"
 
     files = safe_listdir(data_path)
 
@@ -217,66 +211,38 @@ if page == "Structure Analysis":
     atoms = list(structure.get_atoms())
     coords = np.array([a.get_coord() for a in atoms])
 
-    st.subheader("Structure Info")
     st.write(f"Atoms: {len(coords)}")
 
-    # Ligand
-    st.subheader("Ligand")
     smiles = st.text_input("SMILES", "CCO")
     mw, logp = ligand_properties(smiles)
     st.write(f"MW: {mw:.2f} | LogP: {logp:.2f}")
 
-    # Assign atom types (simple)
     atom_types = ["C"] * len(coords)
-
-    # ENERGY
-    st.subheader("Energy")
     energy = compute_energy(coords, atom_types)
 
     st.metric("Total Energy", f"{energy['Total']:.2f}")
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Bond", f"{energy['Bond']:.2f}")
-    c2.metric("Angle", f"{energy['Angle']:.2f}")
-    c3.metric("Dihedral", f"{energy['Dihedral']:.2f}")
-
-    c4, c5 = st.columns(2)
-    c4.metric("vdW", f"{energy['vdW']:.2f}")
-    c5.metric("Electrostatic", f"{energy['Electrostatic']:.2f}")
-
-    # 3D VIEW
-    st.subheader("3D Viewer")
-    try:
-        with open(os.path.join(data_path, selected_file)) as f:
-            pdb_data = f.read()
-
-        view = py3Dmol.view(width=700, height=500)
-        view.addModel(pdb_data, "pdb")
-        view.setStyle({"cartoon": {"color": "spectrum"}})
-        view.zoomTo()
-
-        st.components.v1.html(view._make_html(), height=500)
-    except:
-        st.error("Visualization failed")
-
-# =====================================================
+# =============================
 # FORCE FIELD EXPLORER
-# =====================================================
+# =============================
 elif page == "Force Field Explorer":
 
     st.subheader("Force Field Data")
 
-    tab = st.selectbox("Select", [
-        "Atoms", "Bonds", "Angles", "Dihedrals", "Nonbonded"
-    ])
+    tab = st.selectbox("Select", ["Atoms", "Bonds", "Angles", "Dihedrals", "Nonbonded"])
 
     if tab == "Atoms":
         st.dataframe(atoms_df)
-        st.bar_chart(atoms_df[["mass", "charge"]])
+
+        if all(c in atoms_df.columns for c in ["mass", "charge"]):
+            chart_df = atoms_df.set_index("atom_type")[["mass", "charge"]]
+            st.bar_chart(chart_df)
+        else:
+            st.error("Columns missing")
+            st.write(atoms_df.columns)
 
     elif tab == "Bonds":
         st.dataframe(bonds_df)
-        st.bar_chart(bonds_df[["k"]])
 
     elif tab == "Angles":
         st.dataframe(angles_df)
