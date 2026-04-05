@@ -2,10 +2,15 @@ import streamlit as st
 import os
 import numpy as np
 import pandas as pd
-from Bio.PDB import PDBParser
-from rdkit import Chem
-from rdkit.Chem import Descriptors
+import re
 import py3Dmol
+
+# Safe Biopython import
+try:
+    from Bio.PDB import PDBParser
+except ImportError:
+    st.error("Biopython not installed. Add it to requirements.txt")
+    st.stop()
 
 # -----------------------------
 # PAGE CONFIG
@@ -51,28 +56,14 @@ def angle(a, b, c):
     return np.degrees(np.arccos(np.clip(cos_theta, -1, 1)))
 
 # -----------------------------
-# FORCE FIELD PARSER
+# SIMPLE LIGAND MODEL (NO RDKit)
 # -----------------------------
-def load_forcefield(file="forcefield_dataset.txt"):
-    sections = {}
-    current = None
-
-    if not os.path.exists(file):
-        return {}
-
-    with open(file) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-
-            if line.startswith("["):
-                current = line.strip("[]")
-                sections[current] = []
-            else:
-                sections[current].append(line.split())
-
-    return sections
+def ligand_properties(smiles):
+    weights = {"C":12,"H":1,"O":16,"N":14,"S":32}
+    tokens = re.findall(r'[A-Z][a-z]?', smiles)
+    mw = sum(weights.get(t, 0) for t in tokens)
+    logp = len(tokens) * 0.15
+    return mw, logp
 
 # -----------------------------
 # SAVE SCORES
@@ -116,7 +107,6 @@ def docking_score(protein_coords, ligand_coords):
                     hydrophobic += -0.1
 
     total = vdw + elec + hbond + hydrophobic
-
     return vdw, elec, hbond, hydrophobic, total
 
 # -----------------------------
@@ -129,14 +119,6 @@ st.title("🧬 Biomolecular Teaching Platform (AMBER + Docking + LMS)")
 # -----------------------------
 st.sidebar.header("⚙️ Configuration")
 
-# Show dataset
-if os.path.exists("forcefield_dataset.txt"):
-    with open("forcefield_dataset.txt") as f:
-        st.sidebar.text_area("Force Field Dataset", f.read(), height=300)
-
-# -----------------------------
-# STRUCTURE SELECTION
-# -----------------------------
 data_type = st.sidebar.selectbox("Dataset Type", ["DNA", "Protein"])
 data_path = "data/dna" if data_type == "DNA" else "data/proteins"
 
@@ -172,14 +154,10 @@ st.write(f"Atoms: {len(atoms)}")
 st.subheader("💊 Ligand")
 
 smiles = st.text_input("Enter SMILES", "CCO")
-mol = Chem.MolFromSmiles(smiles)
+mw, logp = ligand_properties(smiles)
 
-if mol:
-    st.write(f"MW: {Descriptors.MolWt(mol):.2f}")
-    st.write(f"LogP: {Descriptors.MolLogP(mol):.2f}")
-else:
-    st.error("Invalid SMILES")
-    st.stop()
+st.write(f"Estimated Molecular Weight: {mw:.2f}")
+st.write(f"Estimated LogP: {logp:.2f}")
 
 # -----------------------------
 # STUDENT PREDICTION
@@ -205,7 +183,7 @@ theta0 = 109.5
 epsilon = 0.2
 sigma = 3.5
 
-# Limit size
+# Limit size for performance
 if len(coords) > 300:
     coords = coords[np.random.choice(len(coords), 300, replace=False)]
 
@@ -275,6 +253,16 @@ st.write(f"Score: {score:.2f}")
 if st.button("Submit Score"):
     save_score(st.session_state.user, score)
     st.success("Score saved!")
+
+# -----------------------------
+# DASHBOARD
+# -----------------------------
+st.subheader("📊 Performance Dashboard")
+
+if os.path.exists("scores.csv"):
+    df = pd.read_csv("scores.csv")
+    st.dataframe(df)
+    st.line_chart(df["Score"])
 
 # -----------------------------
 # EXPORT
