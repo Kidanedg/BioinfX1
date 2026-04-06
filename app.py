@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from io import StringIO
+from openmm.app import *
+from openmm import *
+from openmm.unit import *
+from io import StringIO
 
 # =============================
 # ⚙️ CONFIG
@@ -475,7 +479,75 @@ def ai_interpret_simulation(energy, sample_size, method, n_atoms):
 
     return insights
 
+def run_openmm_charmm(protein_data):
 
+    try:
+        # =============================
+        # 📂 LOAD PDB FROM MEMORY
+        # =============================
+        pdb = PDBFile(StringIO(protein_data))
+
+        # =============================
+        # ⚛️ LOAD FORCE FIELD
+        # =============================
+        forcefield = ForceField('charmm36.xml')
+
+        # =============================
+        # ⚙️ CREATE SYSTEM
+        # =============================
+        system = forcefield.createSystem(
+            pdb.topology,
+            nonbondedMethod=NoCutoff,
+            constraints=HBonds
+        )
+
+        # =============================
+        # ⏱ INTEGRATOR
+        # =============================
+        integrator = VerletIntegrator(0.002)  # 2 fs timestep
+
+        # =============================
+        # 🧪 SIMULATION OBJECT
+        # =============================
+        simulation = Simulation(
+            pdb.topology,
+            system,
+            integrator
+        )
+
+        simulation.context.setPositions(pdb.positions)
+
+        # =============================
+        # ⚡ INITIAL ENERGY
+        # =============================
+        state = simulation.context.getState(getEnergy=True)
+        initial_energy = state.getPotentialEnergy()
+
+        # =============================
+        # 🧊 ENERGY MINIMIZATION
+        # =============================
+        simulation.minimizeEnergy()
+
+        state_min = simulation.context.getState(getEnergy=True)
+        minimized_energy = state_min.getPotentialEnergy()
+
+        # =============================
+        # 🔁 OPTIONAL SHORT MD RUN
+        # =============================
+        simulation.context.setVelocitiesToTemperature(300*kelvin)
+        simulation.step(100)  # small MD step
+
+        state_final = simulation.context.getState(getEnergy=True)
+        final_energy = state_final.getPotentialEnergy()
+
+        return {
+            "initial_energy": initial_energy,
+            "minimized_energy": minimized_energy,
+            "final_energy": final_energy
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 # =============================
 # ⚛️ SIMULATION (OPTIMIZED)
 # =============================
@@ -509,7 +581,26 @@ if page == "⚛️ Simulation":
 
         coords = np.array([a.get_coord() for a in atoms])
         n_atoms = len(coords)
+st.markdown("### ⚛️ CHARMM Simulation (OpenMM)")
 
+run_openmm = st.button("🚀 Run CHARMM Simulation")
+
+if run_openmm:
+
+    with st.spinner("🧠 Running OpenMM CHARMM simulation..."):
+
+        results = run_openmm_charmm(protein_data)
+
+        if "error" in results:
+            st.error(f"❌ {results['error']}")
+        else:
+            st.success("✅ Simulation completed")
+
+            c1, c2, c3 = st.columns(3)
+
+            c1.metric("⚡ Initial Energy", str(results["initial_energy"]))
+            c2.metric("🧊 Minimized Energy", str(results["minimized_energy"]))
+            c3.metric("🔁 Final Energy", str(results["final_energy"]))
         # =============================
         # 📊 OVERVIEW
         # =============================
