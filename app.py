@@ -448,33 +448,36 @@ if page == "🧬 Structure Analysis":
 def ai_interpret_simulation(energy, sample_size, method, n_atoms):
     insights = []
 
+    # Stability
     if energy < -1000:
         insights.append("🟢 Highly stable molecular system with strong attractive forces")
     elif energy < -100:
         insights.append("🟢 Stable configuration — favorable atomic interactions")
     elif energy < 100:
-        insights.append("🟡 Moderate stability — balanced attractive and repulsive forces")
+        insights.append("🟡 Moderate stability — balanced forces")
     else:
-        insights.append("🔴 High-energy system — possible steric clashes or instability")
+        insights.append("🔴 High-energy system — possible instability or clashes")
 
+    # Sampling quality
     ratio = sample_size / n_atoms
     if ratio < 0.2:
-        insights.append("⚠️ Low sampling coverage — results may not represent full structure")
+        insights.append("⚠️ Low sampling coverage — may miss structural features")
     elif ratio < 0.7:
-        insights.append("🔹 Balanced sampling — good trade-off between speed and accuracy")
+        insights.append("🔹 Balanced sampling — good speed vs accuracy")
     else:
-        insights.append("🔹 High sampling coverage — results are more reliable")
+        insights.append("🔹 High sampling coverage — more reliable results")
 
+    # Method insight
     if method == "Distance Sum":
-        insights.append("📏 Distance-based model highlights structural spread, not physical energy")
+        insights.append("📏 Distance model reflects geometry, not physical energy")
     else:
-        insights.append("⚛️ Lennard-Jones approximation captures realistic intermolecular forces")
+        insights.append("⚛️ Lennard-Jones captures realistic intermolecular forces")
 
     return insights
 
 
 # =============================
-# ⚛️ SIMULATION (PREMIUM UI - FIXED)
+# ⚛️ SIMULATION (OPTIMIZED)
 # =============================
 elif page == "⚛️ Simulation":
 
@@ -493,19 +496,23 @@ elif page == "⚛️ Simulation":
     """, unsafe_allow_html=True)
 
     if protein_file:
+
         protein_data = protein_file.read().decode("utf-8")
 
         parser = PDBParser(QUIET=True)
         structure = parser.get_structure("prot", StringIO(protein_data))
         atoms = list(structure.get_atoms())
 
-        if len(atoms) == 0:
+        if not atoms:
             st.error("❌ No atoms found in file")
             st.stop()
 
         coords = np.array([a.get_coord() for a in atoms])
-        n_atoms = int(len(coords))
+        n_atoms = len(coords)
 
+        # =============================
+        # 📊 OVERVIEW
+        # =============================
         st.markdown("### 📊 System Overview")
 
         c1, c2, c3 = st.columns(3)
@@ -534,29 +541,32 @@ elif page == "⚛️ Simulation":
 
         st.success("✅ Protein structure loaded successfully")
 
+        # =============================
+        # 🧊 VIEWER
+        # =============================
         st.markdown("### 🧊 3D Molecular Structure")
         show_3d(protein_data)
 
+        # =============================
+        # ⚙️ CONTROLS
+        # =============================
         st.markdown("### ⚙️ Simulation Control Panel")
 
-        box1, box2 = st.columns([2, 1])
+        if n_atoms < 10:
+            st.error("❌ Protein too small for simulation")
+            st.stop()
 
-        with box1:
-            if n_atoms < 10:
-                st.error("❌ Protein too small for simulation")
-                st.stop()
+        col1, col2 = st.columns([2, 1])
 
+        with col1:
             min_atoms = 10 if n_atoms < 100 else 100
-            max_atoms = n_atoms
             default_atoms = min(1000, n_atoms)
 
             sample_size = st.slider(
-                "🔬 Sample Size (Performance Control)",
+                "🔬 Sample Size",
                 min_value=min_atoms,
-                max_value=max_atoms,
-                value=default_atoms,
-                step=1,
-                help=f"Total atoms: {n_atoms}"
+                max_value=n_atoms,
+                value=default_atoms
             )
 
             method = st.radio(
@@ -565,39 +575,33 @@ elif page == "⚛️ Simulation":
                 horizontal=True
             )
 
-        with box2:
+        with col2:
             st.markdown("<br>", unsafe_allow_html=True)
             run_btn = st.button("⚡ Run Simulation", use_container_width=True)
 
         # =============================
-        # ⚡ SIMULATION EXECUTION
+        # 🚀 RUN SIMULATION
         # =============================
         if run_btn:
 
-            progress = st.progress(0)
-
-            with st.spinner("🧠 Running molecular computation..."):
+            with st.spinner("🧠 Running simulation..."):
 
                 coords_sample = coords[np.random.choice(n_atoms, sample_size, replace=False)]
 
-                for i in range(100):
-                    progress.progress(i + 1)
+                # =============================
+                # ⚡ FAST VECTOR CALCULATION
+                # =============================
+                diff = coords_sample[:, None, :] - coords_sample[None, :, :]
+                dist_matrix = np.linalg.norm(diff, axis=-1)
+
+                # Avoid division by zero
+                dist_matrix[dist_matrix == 0] = 1e-9
 
                 if method == "Distance Sum":
-                    energy = np.sum([
-                        np.linalg.norm(coords_sample[i] - coords_sample[j])
-                        for i in range(len(coords_sample))
-                        for j in range(i + 1, len(coords_sample))
-                    ])
+                    energy = np.sum(dist_matrix) / 2  # avoid double counting
                 else:
-                    energy = 0.0
-                    for i in range(len(coords_sample)):
-                        for j in range(i + 1, len(coords_sample)):
-                            r = np.linalg.norm(coords_sample[i] - coords_sample[j])
-                            if r > 0:
-                                energy += (1 / r**12 - 2 / r**6)
-
-                progress.empty()
+                    inv_r6 = (1 / dist_matrix**6)
+                    energy = np.sum(inv_r6**2 - 2 * inv_r6) / 2
 
                 # =============================
                 # 📈 RESULTS
@@ -611,7 +615,7 @@ elif page == "⚛️ Simulation":
                 st.success("🎉 Simulation completed successfully!")
 
                 # =============================
-                # 🧠 AI SIMULATION INSIGHTS ✅ FIXED
+                # 🧠 AI INSIGHTS
                 # =============================
                 st.markdown("---")
                 st.markdown("### 🧠 AI Simulation Insights")
@@ -636,8 +640,6 @@ elif page == "⚛️ Simulation":
                 fig, ax = plt.subplots()
                 ax.hist(coords_sample.flatten(), bins=50)
                 ax.set_title("Atomic Coordinate Distribution")
-                ax.set_xlabel("Coordinate Value")
-                ax.set_ylabel("Frequency")
                 st.pyplot(fig)
 
                 # =============================
@@ -645,15 +647,10 @@ elif page == "⚛️ Simulation":
                 # =============================
                 st.markdown("### 🔥 Distance Interaction Map")
 
-                dist_matrix = np.linalg.norm(
-                    coords_sample[:, None, :] - coords_sample[None, :, :],
-                    axis=-1
-                )
-
                 fig2, ax2 = plt.subplots()
                 im = ax2.imshow(dist_matrix)
-                ax2.set_title("Pairwise Distance Matrix")
                 plt.colorbar(im, ax=ax2)
+                ax2.set_title("Pairwise Distance Matrix")
                 st.pyplot(fig2)
 
     else:
