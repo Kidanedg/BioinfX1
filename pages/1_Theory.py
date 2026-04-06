@@ -20,14 +20,12 @@ Bond stretching is modeled as a harmonic spring.
 Atoms prefer an equilibrium distance, and deviations cost energy.
 """)
 
-:contentReference[oaicite:0]{index=0}
+st.latex(r"E = k(r - r_0)^2")
 
 st.markdown("""
 - **k** → force constant (bond stiffness)  
 - **r₀** → equilibrium bond length  
 - **r** → current bond length  
-
-👉 If the bond stretches or compresses, energy increases.
 """)
 
 # =============================
@@ -41,14 +39,11 @@ This describes **van der Waals interactions**:
 - Repulsion at short distance  
 """)
 
-:contentReference[oaicite:1]{index=1}
+st.latex(r"V(r) = 4\varepsilon \left[\left(\frac{\sigma}{r}\right)^{12} - \left(\frac{\sigma}{r}\right)^6\right]")
 
 st.markdown("""
 - **ε (epsilon)** → interaction strength  
 - **σ (sigma)** → distance where potential = 0  
-
-👉 The **r⁻¹² term** = strong repulsion  
-👉 The **r⁻⁶ term** = weak attraction  
 """)
 
 # =============================
@@ -56,36 +51,29 @@ st.markdown("""
 # =============================
 st.markdown("## ⚡ Total Potential Energy")
 
-st.markdown("""
-The total energy of a molecular system is the sum of all interactions:
+st.latex(r"""
+E_{total} =
+\sum_{bonds} k_b(r - r_0)^2 +
+\sum_{angles} k_\theta(\theta - \theta_0)^2 +
+\sum_{dihedrals} V_n[1 + \cos(n\phi - \gamma)] +
+\sum_{i<j} 4\varepsilon \left[
+\left(\frac{\sigma}{r_{ij}}\right)^{12} -
+\left(\frac{\sigma}{r_{ij}}\right)^6
+\right]
 """)
-
-:contentReference[oaicite:2]{index=2}
 
 st.markdown("""
 ### 🔍 Breakdown:
 
-**1. Bond Stretching**
-- Energy from bond length changes
+**1. Bond Stretching** → bond length changes  
+**2. Angle Bending** → bond angle deviations  
+**3. Dihedral (Torsion)** → rotation around bonds  
+**4. Non-bonded** → van der Waals interactions  
 
-**2. Angle Bending**
-- Energy from bond angle deviations
-
-**3. Dihedral (Torsion)**
-- Rotation around bonds
-
-**4. Non-bonded Interactions**
-- Lennard-Jones (van der Waals)
-- (Often includes electrostatics too)
-
-👉 This equation is the **foundation of molecular dynamics simulations (OpenMM, AMBER, CHARMM)**.
+👉 This is the core equation behind **OpenMM simulations**.
 """)
 
 # =============================
-# 🧠 LEARNING NOTE
+# 🧠 NOTE
 # =============================
-st.info("""
-🎓 Students must understand how each term contributes to total energy:
-- Bonded terms stabilize structure
-- Non-bonded terms control interactions and folding
-""")
+st.info("🎓 Students must understand equations before simulation.")
