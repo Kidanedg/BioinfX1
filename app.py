@@ -290,14 +290,15 @@ def load_forcefield(file):
     df = pd.read_csv(file)
     return dict(zip(df["atom"], df["charge"]))
 
-
 # =============================
 # 🧠 AI INTERPRETATION ENGINE
 # =============================
 def ai_interpret_structure(n_atoms, n_chains, binding_energy=None, binding_size=None):
     insights = []
 
+    # -----------------------------
     # Size
+    # -----------------------------
     if n_atoms < 1000:
         insights.append("🔹 Small protein — fast folding, compact structure")
     elif n_atoms < 5000:
@@ -305,13 +306,17 @@ def ai_interpret_structure(n_atoms, n_chains, binding_energy=None, binding_size=
     else:
         insights.append("🔹 Large protein — complex multi-domain system")
 
+    # -----------------------------
     # Chains
+    # -----------------------------
     if n_chains == 1:
         insights.append("🔸 Monomer — independent biological function")
     else:
         insights.append("🔸 Multi-chain — cooperative or regulatory behavior")
 
-    # Binding insight
+    # -----------------------------
+    # Binding energy
+    # -----------------------------
     if binding_energy is not None:
         if binding_energy < -100:
             insights.append("🟢 Strong ligand binding affinity predicted")
@@ -320,6 +325,9 @@ def ai_interpret_structure(n_atoms, n_chains, binding_energy=None, binding_size=
         else:
             insights.append("🔴 Weak or unstable binding interaction")
 
+    # -----------------------------
+    # Binding site size
+    # -----------------------------
     if binding_size is not None:
         insights.append(f"🧩 Binding site atoms detected: {binding_size}")
 
@@ -327,21 +335,17 @@ def ai_interpret_structure(n_atoms, n_chains, binding_energy=None, binding_size=
 
 
 # =============================
-# STRUCTURE PAGE (ENHANCED UI + GEOMETRY + AI)
+# 🧬 STRUCTURE PAGE (FIXED)
 # =============================
 if page == "🧬 Structure Analysis":
 
     st.title("🧬 Protein Structure Intelligence")
-
-    st.markdown(
-        "Explore biomolecular structure with integrated geometry and AI insights"
-    )
+    st.markdown("Explore biomolecular structure with integrated geometry and AI insights")
 
     # =============================
     # DASHBOARD
     # =============================
     col1, col2, col3, col4 = st.columns(4)
-
     col1.metric("Primary", "1°")
     col2.metric("Secondary", "2°")
     col3.metric("Tertiary", "3°")
@@ -350,6 +354,7 @@ if page == "🧬 Structure Analysis":
     st.markdown("---")
 
     if protein_file:
+
         protein_data = protein_file.read().decode("utf-8")
 
         parser = PDBParser(QUIET=True)
@@ -357,7 +362,6 @@ if page == "🧬 Structure Analysis":
 
         atoms = list(structure.get_atoms())
         coords = np.array([a.get_coord() for a in atoms])
-
         chains = list(structure.get_chains())
 
         n_atoms = len(coords)
@@ -366,68 +370,78 @@ if page == "🧬 Structure Analysis":
         st.success("✅ Protein structure loaded successfully")
 
         # =============================
-        # LAYOUT
+        # MAIN LAYOUT
         # =============================
         left, right = st.columns([2, 1])
 
+        # -----------------------------
+        # 3D VIEW
+        # -----------------------------
         with left:
             show_3d(protein_data)
 
+        # -----------------------------
+        # STATS + ANALYSIS
+        # -----------------------------
         with right:
+
             st.markdown("### 📊 Quick Stats")
             st.metric("Atoms", n_atoms)
             st.metric("Chains", n_chains)
 
             st.markdown("---")
 
-           # =============================
-# ⚛️ GEOMETRY ANALYSIS (NO UPLOAD)
-# =============================
-st.markdown("### ⚛️ Binding Analysis")
+            # =============================
+            # ⚛️ GEOMETRY / BINDING ANALYSIS
+            # =============================
+            st.markdown("### ⚛️ Binding Analysis")
 
-binding_energy = None
-binding_size = None
+            binding_energy = None
+            binding_size = None
 
-# ✅ Expect ligand already stored globally
-ligand_coords = st.session_state.get("ligand_coords", None)
+            ligand_coords = st.session_state.get("ligand_coords", None)
 
-if ligand_coords is not None:
+            if ligand_coords is not None:
 
-    # Detect binding site
-    site_idx = detect_binding_site(coords, ligand_coords)
-    binding_size = len(site_idx)
+                site_idx = detect_binding_site(coords, ligand_coords)
+                binding_size = len(site_idx)
 
-    if binding_size > 0:
-        # Compute energy
-        binding_energy = compute_binding_energy(
-            coords[site_idx], ligand_coords
-        )
+                if binding_size > 0:
 
-        st.metric("Binding Site Size", binding_size)
-        st.metric("Binding Energy", f"{binding_energy:.3f}")
+                    binding_energy = compute_binding_energy(
+                        coords[site_idx],
+                        ligand_coords
+                    )
+
+                    st.metric("Binding Site Size", binding_size)
+                    st.metric("Binding Energy", f"{binding_energy:.3f}")
+
+                else:
+                    st.warning("⚠️ No binding site detected at current cutoff")
+
+            else:
+                st.info("ℹ️ No ligand loaded. Upload ligand in Docking section.")
+
+            # =============================
+            # 🧠 AI INTERPRETATION
+            # =============================
+            st.markdown("---")
+            st.markdown("### 🧠 AI Interpretation")
+
+            insights = ai_interpret_structure(
+                n_atoms,
+                n_chains,
+                binding_energy,
+                binding_size
+            )
+
+            for insight in insights:
+                st.markdown(f"- {insight}")
+
+            st.success("AI insights generated")
+
     else:
-        st.warning("⚠️ No binding site detected at current cutoff")
-
-else:
-    st.info("ℹ️ No ligand loaded. Please upload ligand in the designated section.")
-
-# =============================
-# 🧠 AI INTERPRETATION
-# =============================
-st.markdown("---")
-st.markdown("### 🧠 AI Interpretation")
-
-insights = ai_interpret_structure(
-    n_atoms,
-    n_chains,
-    binding_energy,
-    binding_size
-)
-
-for insight in insights:
-    st.markdown(f"- {insight}")
-
-st.success("AI insights generated")
+        st.info("⬆️ Upload a protein PDB file to begin analysis")
 # =============================
 # 🧠 AI INTERPRETATION (SIMULATION)
 # =============================
