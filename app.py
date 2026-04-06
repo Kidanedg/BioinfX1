@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from io import StringIO
 
 # =============================
-# CONFIG
+# ⚙️ CONFIG
 # =============================
 st.set_page_config(
     page_title="🧬 BioMolecular AI Platform",
@@ -15,37 +15,85 @@ st.set_page_config(
 )
 
 # =============================
-# CUSTOM CSS (🔥 UI BOOST)
+# 🎨 ADVANCED UI THEME
 # =============================
 st.markdown("""
 <style>
+
+/* ===== GLOBAL ===== */
 body {
-    background-color: #0e1117;
+    background: linear-gradient(135deg, #0e1117, #1c1f26);
     color: #ffffff;
+    font-family: 'Segoe UI', sans-serif;
 }
-.metric-box {
-    background: #1c1f26;
-    padding: 15px;
-    border-radius: 12px;
-    text-align: center;
-}
+
+/* ===== HEADERS ===== */
 h1, h2, h3 {
     color: #00d4ff;
+    font-weight: 600;
 }
+
+/* ===== METRIC BOX ===== */
+.metric-box {
+    background: rgba(255,255,255,0.05);
+    padding: 18px;
+    border-radius: 15px;
+    text-align: center;
+    backdrop-filter: blur(6px);
+    box-shadow: 0px 4px 20px rgba(0,0,0,0.3);
+}
+
+/* ===== LOGIN CARD ===== */
+.login-card {
+    background: rgba(255,255,255,0.06);
+    padding: 35px;
+    border-radius: 18px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0px 8px 30px rgba(0,0,0,0.4);
+    text-align: center;
+}
+
+/* ===== INPUT FIELDS ===== */
+.stTextInput input {
+    border-radius: 10px;
+    padding: 10px;
+}
+
+/* ===== BUTTON ===== */
+.stButton button {
+    border-radius: 12px;
+    background: linear-gradient(90deg, #00d4ff, #0072ff);
+    color: white;
+    font-weight: bold;
+    padding: 10px;
+    transition: 0.3s;
+}
+.stButton button:hover {
+    transform: scale(1.03);
+    background: linear-gradient(90deg, #0072ff, #00d4ff);
+}
+
+/* ===== FOOT NOTE ===== */
+.small-text {
+    font-size: 12px;
+    color: #aaaaaa;
+    margin-top: 10px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
 # =============================
-# SAFE IMPORT
+# 🔬 SAFE IMPORT
 # =============================
 try:
     from Bio.PDB import PDBParser
 except:
-    st.error("Install Biopython: pip install biopython")
+    st.error("⚠️ Install Biopython: pip install biopython")
     st.stop()
 
 # =============================
-# LOGIN SYSTEM
+# 🔐 LOGIN SYSTEM (ENHANCED)
 # =============================
 USERS = {"student": "1234", "admin": "admin"}
 
@@ -53,43 +101,96 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
-    st.markdown("# 🔐 BioMolecular Platform Login")
 
-    col1, col2, col3 = st.columns([1,2,1])
+    st.markdown("## 🧬 BioMolecular AI Platform")
+    st.caption("Secure access to simulation, docking, and molecular analytics")
+
+    # Centered layout
+    col1, col2, col3 = st.columns([1, 2, 1])
+
     with col2:
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
+        st.markdown('<div class="login-card">', unsafe_allow_html=True)
 
-        if st.button("🚀 Login", use_container_width=True):
+        st.markdown("### 🔐 Login Portal")
+
+        u = st.text_input("👤 Username")
+        p = st.text_input("🔑 Password", type="password")
+
+        login_btn = st.button("🚀 Login", use_container_width=True)
+
+        if login_btn:
             if USERS.get(u) == p:
                 st.session_state.logged_in = True
+                st.success("✅ Access granted")
                 st.rerun()
             else:
-                st.error("❌ Invalid credentials")
+                st.error("❌ Invalid username or password")
+
+        st.markdown(
+            '<div class="small-text">© 2026 Kidane Desta • Aksum University (AkU)</div>',
+            unsafe_allow_html=True
+        )
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
     st.stop()
 
 # =============================
-# SIDEBAR
+# 🧭 SIDEBAR (ENHANCED)
 # =============================
-st.sidebar.title("🧭 Navigation Panel")
+with st.sidebar:
 
-page = st.sidebar.radio(
-    "Select Module",
-    ["🧬 Structure Analysis", "⚛️ Simulation", "🧪 Docking"]
-)
+    st.markdown("## 🧭 Navigation")
+    st.caption("Explore molecular modules")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("📂 Input Data")
+    page = st.radio(
+        "Select Module",
+        ["🧬 Structure Analysis", "⚛️ Simulation", "🧪 Docking"],
+        label_visibility="collapsed"
+    )
 
-protein_file = st.sidebar.file_uploader("Protein (PDB)", type="pdb")
-ligand_file = st.sidebar.file_uploader("Ligand (PDB)", type="pdb")
-forcefield_file = st.sidebar.file_uploader("Force Field (CSV)", type="csv")
+    st.markdown("---")
+
+    # =============================
+    # 📂 DATA INPUT SECTION
+    # =============================
+    st.markdown("### 📂 Input Data")
+
+    protein_file = st.file_uploader("🧬 Protein (PDB)", type="pdb")
+    ligand_file = st.file_uploader("🧪 Ligand (PDB)", type="pdb")
+    forcefield_file = st.file_uploader("⚛️ Force Field (CSV)", type="csv")
+
+    st.markdown("---")
+
+    # =============================
+    # ⚙️ VIEWER SETTINGS
+    # =============================
+    st.markdown("### ⚙️ Viewer Settings")
+
+    show_surface = st.toggle("Surface", value=True)
+    show_labels = st.toggle("Atom Labels", value=True)
+    style = st.selectbox("Style", ["Cartoon", "Stick", "Sphere"])
+
+    st.markdown("---")
+
+    st.caption("© 2026 Kidane Desta • AkU")
+
 
 # =============================
-# 3D VIEWER (UPGRADED)
+# 🧊 3D VIEWER (ENHANCED)
 # =============================
 def show_3d(protein, ligand=None):
+
+    # =============================
+    # 🎨 STYLE CONTROL
+    # =============================
+    if style == "Cartoon":
+        style_js = "cartoon: {color: 'spectrum'}"
+    elif style == "Stick":
+        style_js = "stick: {}"
+    else:
+        style_js = "sphere: {scale: 0.3}"
+
     ligand_js = ""
 
     if ligand:
@@ -101,48 +202,63 @@ def show_3d(protein, ligand=None):
         }});
         """
 
+    surface_js = ""
+    if show_surface:
+        surface_js = """
+        viewer.addSurface($3Dmol.SurfaceType.VDW, {
+            opacity: 0.35,
+            color: "white"
+        });
+        """
+
+    label_js = ""
+    if show_labels:
+        label_js = """
+        viewer.setHoverable({}, true,
+            function(atom, viewer) {
+                if (atom) {
+                    viewer.addLabel(atom.elem + " (" + atom.resn + atom.resi + ")", {
+                        position: atom,
+                        backgroundColor: "black",
+                        fontColor: "white",
+                        fontSize: 12
+                    });
+                }
+            },
+            function(atom, viewer) {
+                viewer.removeAllLabels();
+            }
+        );
+        """
+
+    # =============================
+    # 🌐 HTML VIEWER
+    # =============================
     html = f"""
-    <div id="viewer" style="width:100%; height:650px;"></div>
+    <div id="viewer" style="width:100%; height:700px; border-radius:12px;"></div>
     <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
 
     <script>
         let viewer = $3Dmol.createViewer("viewer", {{
-            backgroundColor: "black"
+            backgroundColor: "#0e1117"
         }});
 
         viewer.addModel(`{protein}`, "pdb");
 
         viewer.setStyle({{}}, {{
-            cartoon: {{color: 'spectrum'}}
+            {style_js}
         }});
 
         {ligand_js}
-
-        viewer.addSurface($3Dmol.SurfaceType.VDW, {{
-            opacity: 0.4,
-            color: "white"
-        }});
-
-        viewer.setHoverable({{}}, true,
-            function(atom, viewer) {{
-                if (atom) {{
-                    viewer.addLabel(atom.resn + " " + atom.resi, {{
-                        position: atom,
-                        backgroundColor: "black",
-                        fontColor: "white"
-                    }});
-                }}
-            }},
-            function(atom, viewer) {{
-                viewer.removeAllLabels();
-            }}
-        );
+        {surface_js}
+        {label_js}
 
         viewer.zoomTo();
         viewer.render();
     </script>
     """
-    components.html(html, height=650)
+
+    components.html(html, height=700)
 # =============================
 # GEOMETRY (OPTIMIZED + CLEAN)
 # =============================
@@ -271,52 +387,127 @@ if page == "🧬 Structure Analysis":
     else:
         st.markdown("### 📂 Upload Required")
         st.warning("Please upload a protein file to begin analysis")
-
 # =============================
-# SIMULATION
+# ⚛️ SIMULATION (ENHANCED)
 # =============================
 elif page == "⚛️ Simulation":
 
-    st.title("⚛️ Molecular Simulation")
+    st.markdown("## ⚛️ Molecular Simulation Lab")
+    st.caption("Analyze structure, compute energies, and explore atomic behavior")
 
     if protein_file:
         protein_data = protein_file.read().decode("utf-8")
 
+        # =============================
+        # 🔬 STRUCTURE PARSING
+        # =============================
         parser = PDBParser(QUIET=True)
         structure = parser.get_structure("prot", StringIO(protein_data))
         atoms = list(structure.get_atoms())
         coords = np.array([a.get_coord() for a in atoms])
 
-        st.success(f"Loaded {len(coords)} atoms")
+        # =============================
+        # 📊 SUMMARY CARDS
+        # =============================
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🧬 Total Atoms", len(coords))
+        c2.metric("📏 Dimensions", f"{coords.shape}")
+        c3.metric("📍 Center (Å)", f"{np.mean(coords):.2f}")
 
+        st.success("✅ Protein structure loaded successfully")
+
+        # =============================
+        # 🧊 3D VISUALIZATION
+        # =============================
+        st.markdown("### 🧊 3D Structure Viewer")
         show_3d(protein_data)
 
-        if st.button("⚡ Run Simulation"):
+        # =============================
+        # ⚙️ SIMULATION CONTROLS
+        # =============================
+        st.markdown("### ⚙️ Simulation Settings")
 
-            energy = np.sum([
-                distance(coords[i], coords[j])
-                for i in range(len(coords))
-                for j in range(i+1, len(coords))
-            ])
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            sample_size = st.slider("Sample Atoms (speed control)", 100, len(coords), min(1000, len(coords)))
+        with col2:
+            method = st.selectbox("Energy Model", ["Distance Sum", "Lennard-Jones (approx)"])
+        with col3:
+            run_btn = st.button("⚡ Run Simulation")
 
-            c1, c2 = st.columns(2)
-            c1.metric("System Energy", f"{energy:.2f}")
-            c2.metric("Atoms", len(coords))
+        # =============================
+        # ⚡ RUN SIMULATION
+        # =============================
+        if run_btn:
 
-            fig, ax = plt.subplots()
-            ax.hist(coords.flatten(), bins=50, color="cyan")
-            ax.set_title("Atomic Distribution")
-            st.pyplot(fig)
+            with st.spinner("Running molecular simulation..."):
+
+                coords_sample = coords[:sample_size]
+
+                # -----------------------------
+                # ENERGY CALCULATION
+                # -----------------------------
+                if method == "Distance Sum":
+                    energy = np.sum([
+                        np.linalg.norm(coords_sample[i] - coords_sample[j])
+                        for i in range(len(coords_sample))
+                        for j in range(i+1, len(coords_sample))
+                    ])
+
+                elif method == "Lennard-Jones (approx)":
+                    energy = 0
+                    for i in range(len(coords_sample)):
+                        for j in range(i+1, len(coords_sample)):
+                            r = np.linalg.norm(coords_sample[i] - coords_sample[j])
+                            if r > 0:
+                                energy += (1/r**12 - 2/r**6)
+
+                # =============================
+                # 📈 RESULTS DISPLAY
+                # =============================
+                r1, r2 = st.columns(2)
+                r1.metric("⚡ System Energy", f"{energy:.3f}")
+                r2.metric("🔬 Sampled Atoms", sample_size)
+
+                st.success("Simulation completed successfully!")
+
+                # =============================
+                # 📊 VISUAL ANALYTICS
+                # =============================
+                st.markdown("### 📊 Atomic Coordinate Distribution")
+
+                fig, ax = plt.subplots()
+                ax.hist(coords_sample.flatten(), bins=50)
+                ax.set_title("Atomic Distribution")
+                ax.set_xlabel("Coordinate Value")
+                ax.set_ylabel("Frequency")
+                st.pyplot(fig)
+
+                # =============================
+                # 🔍 DISTANCE HEATMAP (NEW)
+                # =============================
+                st.markdown("### 🔥 Pairwise Distance Heatmap")
+
+                dist_matrix = np.linalg.norm(
+                    coords_sample[:, None, :] - coords_sample[None, :, :],
+                    axis=-1
+                )
+
+                fig2, ax2 = plt.subplots()
+                im = ax2.imshow(dist_matrix)
+                ax2.set_title("Distance Matrix")
+                plt.colorbar(im, ax=ax2)
+                st.pyplot(fig2)
 
     else:
-        st.warning("Upload a protein")
-
+        st.warning("⚠️ Please upload a protein PDB file to start simulation")
 # =============================
-# DOCKING
+# 🧪 DOCKING (ENHANCED)
 # =============================
 elif page == "🧪 Docking":
 
-    st.title("🧪 Docking & Binding")
+    st.markdown("## 🧪 Molecular Docking Studio")
+    st.caption("Protein–Ligand interaction analysis and binding evaluation")
 
     if protein_file and ligand_file:
 
@@ -325,42 +516,165 @@ elif page == "🧪 Docking":
 
         parser = PDBParser(QUIET=True)
 
-        prot = parser.get_structure("p", StringIO(prot_data))
-        lig = parser.get_structure("l", StringIO(lig_data))
+        prot = parser.get_structure("protein", StringIO(prot_data))
+        lig = parser.get_structure("ligand", StringIO(lig_data))
 
         p_coords = np.array([a.get_coord() for a in prot.get_atoms()])
         l_coords = np.array([a.get_coord() for a in lig.get_atoms()])
 
-        # Docking
-        shift = p_coords.mean(axis=0) - l_coords.mean(axis=0)
-        l_coords += shift
+        # =============================
+        # 📊 INITIAL SUMMARY
+        # =============================
+        s1, s2 = st.columns(2)
+        s1.metric("🧬 Protein Atoms", len(p_coords))
+        s2.metric("🧪 Ligand Atoms", len(l_coords))
 
-        site = detect_binding_site(p_coords, l_coords)
-        energy = compute_binding_energy(p_coords, l_coords)
-
-        st.success("Docking Completed")
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Binding Energy", f"{energy:.2f}")
-        c2.metric("Binding Atoms", len(site))
-        c3.metric("Ligand Atoms", len(l_coords))
-
+        st.markdown("### 🧊 Pre-Docking Visualization")
         show_3d(prot_data, lig_data)
 
-        fig, ax = plt.subplots()
-        ax.bar(["Energy"], [energy], color="lime")
-        st.pyplot(fig)
+        # =============================
+        # ⚙️ DOCKING SETTINGS
+        # =============================
+        st.markdown("### ⚙️ Docking Configuration")
 
-        if forcefield_file:
-            ff = load_forcefield(forcefield_file)
-            st.success("Force Field Loaded")
-            st.dataframe(pd.DataFrame(list(ff.items()), columns=["Atom", "Charge"]))
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            method = st.selectbox("Docking Method", ["Centroid Align", "Random Search"])
+        with col2:
+            samples = st.slider("Search Iterations", 10, 500, 100)
+        with col3:
+            run_btn = st.button("🚀 Run Docking")
+
+        # =============================
+        # 🚀 RUN DOCKING
+        # =============================
+        if run_btn:
+
+            with st.spinner("Running docking simulation..."):
+
+                # -----------------------------
+                # BASIC DOCKING STRATEGY
+                # -----------------------------
+                if method == "Centroid Align":
+                    shift = p_coords.mean(axis=0) - l_coords.mean(axis=0)
+                    l_coords_shifted = l_coords + shift
+
+                elif method == "Random Search":
+                    best_energy = float("inf")
+                    l_coords_shifted = l_coords.copy()
+
+                    for _ in range(samples):
+                        random_shift = np.random.uniform(-5, 5, size=3)
+                        trial_coords = l_coords + random_shift
+                        e = compute_binding_energy(p_coords, trial_coords)
+
+                        if e < best_energy:
+                            best_energy = e
+                            l_coords_shifted = trial_coords
+
+                # -----------------------------
+                # ANALYSIS
+                # -----------------------------
+                site = detect_binding_site(p_coords, l_coords_shifted)
+                energy = compute_binding_energy(p_coords, l_coords_shifted)
+
+                st.success("✅ Docking Completed Successfully")
+
+                # =============================
+                # 📈 RESULTS DASHBOARD
+                # =============================
+                r1, r2, r3 = st.columns(3)
+                r1.metric("⚡ Binding Energy", f"{energy:.3f}")
+                r2.metric("🔗 Binding Site Atoms", len(site))
+                r3.metric("🧪 Ligand Atoms", len(l_coords_shifted))
+
+                # =============================
+                # 🧊 POST-DOCKING VISUALIZATION
+                # =============================
+                st.markdown("### 🧊 Docked Complex")
+                show_3d(prot_data, lig_data)
+
+                # =============================
+                # 📊 ENERGY VISUALIZATION
+                # =============================
+                st.markdown("### 📊 Binding Energy Profile")
+
+                fig, ax = plt.subplots()
+                ax.bar(["Binding Energy"], [energy])
+                ax.set_ylabel("Energy")
+                ax.set_title("Docking Score")
+                st.pyplot(fig)
+
+                # =============================
+                # 🔥 DISTANCE ANALYSIS
+                # =============================
+                st.markdown("### 🔍 Protein–Ligand Distance Map")
+
+                dist_matrix = np.linalg.norm(
+                    p_coords[:, None, :] - l_coords_shifted[None, :, :],
+                    axis=-1
+                )
+
+                fig2, ax2 = plt.subplots()
+                im = ax2.imshow(dist_matrix)
+                ax2.set_title("Interaction Distance Matrix")
+                plt.colorbar(im, ax=ax2)
+                st.pyplot(fig2)
+
+                # =============================
+                # ⚛️ FORCE FIELD
+                # =============================
+                if forcefield_file:
+                    ff = load_forcefield(forcefield_file)
+
+                    st.markdown("### ⚛️ Force Field Parameters")
+                    st.success("Force Field Loaded")
+
+                    df_ff = pd.DataFrame(list(ff.items()), columns=["Atom Type", "Charge"])
+                    st.dataframe(df_ff, use_container_width=True)
 
     else:
-        st.info("Upload protein & ligand")
+        st.info("⬆️ Upload both protein and ligand files to begin docking")
+# =============================
+# 🧾 FOOTER (ENHANCED)
+# =============================
+st.markdown("""
+<style>
+.footer {
+    position: relative;
+    margin-top: 50px;
+    padding: 20px;
+    border-radius: 12px;
+    background: linear-gradient(90deg, #0f2027, #203a43, #2c5364);
+    color: #e0e0e0;
+    text-align: center;
+    font-size: 14px;
+    box-shadow: 0px -2px 15px rgba(0,0,0,0.3);
+}
 
-# =============================
-# FOOTER
-# =============================
-st.markdown("---")
-st.markdown("🚀 AI Biomolecular Platform | Built for Research & Discovery")
+.footer-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #ffffff;
+}
+
+.footer-sub {
+    font-size: 13px;
+    color: #b0c4de;
+}
+
+.footer-copy {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #aaaaaa;
+}
+</style>
+
+<div class="footer">
+    <div class="footer-title">🚀 AI Biomolecular Platform</div>
+    <div class="footer-sub">Built for Research • Simulation • Discovery</div>
+    <div class="footer-copy">
+        © 2026 Kidane Desta, Aksum University (AkU) • All Rights Reserved
+    </div>
+</div>
+""", unsafe_allow_html=True)
