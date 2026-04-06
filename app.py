@@ -388,7 +388,7 @@ if page == "🧬 Structure Analysis":
         st.markdown("### 📂 Upload Required")
         st.warning("Please upload a protein file to begin analysis")
 # =============================
-# ⚛️ SIMULATION (PREMIUM UI)
+# ⚛️ SIMULATION (PREMIUM UI - FIXED)
 # =============================
 elif page == "⚛️ Simulation":
 
@@ -418,10 +418,16 @@ elif page == "⚛️ Simulation":
         parser = PDBParser(QUIET=True)
         structure = parser.get_structure("prot", StringIO(protein_data))
         atoms = list(structure.get_atoms())
+
+        if len(atoms) == 0:
+            st.error("❌ No atoms found in file")
+            st.stop()
+
         coords = np.array([a.get_coord() for a in atoms])
+        n_atoms = int(len(coords))
 
         # =============================
-        # 📊 DASHBOARD (GLASS CARDS)
+        # 📊 DASHBOARD
         # =============================
         st.markdown("### 📊 System Overview")
 
@@ -443,7 +449,7 @@ elif page == "⚛️ Simulation":
             """, unsafe_allow_html=True)
 
         with c1:
-            card("🧬 Total Atoms", len(coords))
+            card("🧬 Total Atoms", n_atoms)
         with c2:
             card("📏 Dimensions", coords.shape)
         with c3:
@@ -465,11 +471,24 @@ elif page == "⚛️ Simulation":
         box1, box2 = st.columns([2,1])
 
         with box1:
+            # =============================
+            # 🔧 FIXED SLIDER (NO CRASH)
+            # =============================
+            if n_atoms < 10:
+                st.error("❌ Protein too small for simulation")
+                st.stop()
+
+            min_atoms = 10 if n_atoms < 100 else 100
+            max_atoms = n_atoms
+            default_atoms = min(1000, n_atoms)
+
             sample_size = st.slider(
                 "🔬 Sample Size (Performance Control)",
-                100, len(coords),
-                min(1000, len(coords)),
-                help="Reduce atoms to speed up simulation"
+                min_value=min_atoms,
+                max_value=max_atoms,
+                value=default_atoms,
+                step=1,
+                help=f"Total atoms: {n_atoms} | Reduce for faster simulation"
             )
 
             method = st.radio(
@@ -491,34 +510,35 @@ elif page == "⚛️ Simulation":
 
             with st.spinner("🧠 Running molecular computation..."):
 
-                coords_sample = coords[:sample_size]
+                # ✅ Better random sampling
+                coords_sample = coords[np.random.choice(n_atoms, sample_size, replace=False)]
 
-                # Fake progress animation (UX boost)
+                # Fake progress (UX)
                 for i in range(100):
                     progress.progress(i + 1)
 
-                # -----------------------------
-                # ENERGY CALCULATION
-                # -----------------------------
+                # =============================
+                # ⚛️ ENERGY CALCULATION
+                # =============================
                 if method == "Distance Sum":
                     energy = np.sum([
                         np.linalg.norm(coords_sample[i] - coords_sample[j])
                         for i in range(len(coords_sample))
-                        for j in range(i+1, len(coords_sample))
+                        for j in range(i + 1, len(coords_sample))
                     ])
 
                 elif method == "Lennard-Jones (approx)":
-                    energy = 0
+                    energy = 0.0
                     for i in range(len(coords_sample)):
-                        for j in range(i+1, len(coords_sample)):
+                        for j in range(i + 1, len(coords_sample)):
                             r = np.linalg.norm(coords_sample[i] - coords_sample[j])
                             if r > 0:
-                                energy += (1/r**12 - 2/r**6)
+                                energy += (1 / r**12 - 2 / r**6)
 
                 progress.empty()
 
                 # =============================
-                # 📈 RESULTS PANEL
+                # 📈 RESULTS
                 # =============================
                 st.markdown("### 📈 Simulation Results")
 
@@ -529,7 +549,7 @@ elif page == "⚛️ Simulation":
                 st.success("🎉 Simulation completed successfully!")
 
                 # =============================
-                # 📊 VISUAL ANALYTICS
+                # 📊 DISTRIBUTION
                 # =============================
                 st.markdown("### 📊 Atomic Distribution")
 
@@ -557,7 +577,7 @@ elif page == "⚛️ Simulation":
                 st.pyplot(fig2)
 
     else:
-        st.warning("⚠️ Upload a protein PDB file to start simulation")# =============================
+        st.warning("⚠️ Upload a protein PDB file to start simulation")
 # 🧪 DOCKING (ENHANCED)
 # =============================
 elif page == "🧪 Docking":
