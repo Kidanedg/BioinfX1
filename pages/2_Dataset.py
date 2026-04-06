@@ -3,35 +3,135 @@ import pandas as pd
 import numpy as np
 from io import StringIO
 
-st.title("📂 Force Field Dataset Explorer")
+st.set_page_config(page_title="Molecular Mechanics Engine", layout="wide")
 
-uploaded_file = st.file_uploader("Upload force field dataset (CSV or PDB)")
+st.title("🧬 Molecular Mechanics Platform (CHARMM-style)")
 
-if uploaded_file is not None:
+# =========================================================
+# ⚛️ ENERGY FUNCTIONS
+# =========================================================
 
-    # =============================
-    # 📖 READ FILE
-    # =============================
-    file_text = uploaded_file.read().decode("utf-8")
-    lines = file_text.splitlines()
+def bond_energy(coords, bonds, k_b, r0):
+    E = 0
+    for (i, j), kb, r_eq in zip(bonds, k_b, r0):
+        r = np.linalg.norm(coords[i] - coords[j])
+        E += kb * (r - r_eq)**2
+    return E
 
-    st.subheader("📄 Raw Dataset")
-    st.text_area("Dataset", file_text, height=250)
 
-    # =============================
-    # 🧠 DETECT FILE TYPE
-    # =============================
-    is_pdb = any(line.startswith(("ATOM", "HETATM")) for line in lines)
-    is_csv = "," in lines[0]
+def angle_energy(coords, angles, k_theta, theta0):
+    E = 0
+    for (i, j, k), kt, th0 in zip(angles, k_theta, theta0):
+        v1 = coords[i] - coords[j]
+        v2 = coords[k] - coords[j]
 
-    # =========================================================
-    # 🧬 PDB MODE (STRUCTURE ANALYSIS)
-    # =========================================================
-    if is_pdb:
-        st.success("🧬 Detected PDB structure")
+        cos_theta = np.dot(v1, v2) / (
+            np.linalg.norm(v1) * np.linalg.norm(v2)
+        )
+        theta = np.arccos(np.clip(cos_theta, -1, 1))
+        E += kt * (theta - th0)**2
+    return E
 
-        atoms = []
-        coords = []
+
+def dihedral_energy(coords, dihedrals, k_phi, n, delta):
+    E = 0
+    for idx, (i, j, k, l) in enumerate(dihedrals):
+
+        b1 = coords[j] - coords[i]
+        b2 = coords[k] - coords[j]
+        b3 = coords[l] - coords[k]
+
+        n1 = np.cross(b1, b2)
+        n2 = np.cross(b2, b3)
+
+        n1 /= np.linalg.norm(n1)
+        n2 /= np.linalg.norm(n2)
+
+        phi = np.arccos(np.clip(np.dot(n1, n2), -1, 1))
+
+        for t in range(len(k_phi[idx])):
+            E += k_phi[idx][t] * (
+                1 + np.cos(n[idx][t] * phi - delta[idx][t])
+            )
+    return E
+
+
+# =========================================================
+# 🌌 NONBONDED (vdW + Coulomb)
+# =========================================================
+def vdw_energy(r, epsilon, sigma):
+    return 4 * epsilon * ((sigma / r)**12 - (sigma / r)**6)
+
+
+def coulomb_energy(q1, q2, r):
+    k_e = 138.935456
+    return k_e * q1 * q2 / r
+
+
+def nonbonded_energy(coords, charges, sigma, epsilon,
+                     exclusions=set(), one_four=set(), scale_14=0.5):
+
+    E = 0
+    N = len(coords)
+
+    for i in range(N):
+        for j in range(i+1, N):
+
+            if (i, j) in exclusions:
+                continue
+
+            r = np.linalg.norm(coords[i] - coords[j]) + 1e-9
+
+            sig = (sigma[i] + sigma[j]) / 2
+            eps = np.sqrt(epsilon[i] * epsilon[j])
+
+            vdw = vdw_energy(r, eps, sig)
+            coul = coulomb_energy(charges[i], charges[j], r)
+
+            if (i, j) in one_four:
+                vdw *= scale_14
+                coul *= scale_14
+
+            E += vdw + coul
+
+    return E
+
+
+# =========================================================
+# ⚛️ TOTAL ENERGY
+# =========================================================
+def total_energy(coords, bonds, bond_k, bond_r0,
+                 angles, angle_k, angle_theta0,
+                 dihedrals, dih_k, dih_n, dih_delta,
+                 charges, sigma, epsilon,
+                 exclusions, one_four):
+
+    Eb = bond_energy(coords, bonds, bond_k, bond_r0)
+    Ea = angle_energy(coords, angles, angle_k, angle_theta0)
+    Ed = dihedral_energy(coords, dihedrals, dih_k, dih_n, dih_delta)
+    Enb = nonbonded_energy(coords, charges, sigma, epsilon,
+                           exclusions, one_four)
+
+    return Eb, Ea, Ed, Enb, Eb + Ea + Ed + Enb
+
+
+# =========================================================
+# 📂 FILE UPLOAD
+# =========================================================
+uploaded_file = st.file_uploader("Upload PDB or CSV (CHARMM/AMBER style)")
+
+if uploaded_file:
+
+    text = uploaded_file.read().decode("utf-8")
+    lines = text.splitlines()
+
+    # =====================================================
+    # 🧬 PDB PARSER
+    # =====================================================
+    if any(line.startswith(("ATOM", "HETATM")) for line in lines):
+        st.success("🧬 PDB Detected")
+
+        atoms, coords = [], []
 
         for line in lines:
             if line.startswith(("ATOM", "HETATM")):
@@ -40,154 +140,91 @@ if uploaded_file is not None:
                 coords.append([float(parts[6]), float(parts[7]), float(parts[8])])
 
         coords = np.array(coords)
+        N = len(coords)
 
-        df = pd.DataFrame(coords, columns=["X", "Y", "Z"])
-        df["Atom"] = atoms
+        st.write("Atoms:", atoms)
 
-        st.subheader("📊 Atomic Coordinates")
-        st.dataframe(df)
+        # =================================================
+        # 🔗 AUTO TOPOLOGY
+        # =================================================
+        bonds = [(i, i+1) for i in range(N-1)]
+        angles = [(i, i+1, i+2) for i in range(N-2)]
+        dihedrals = [(i, i+1, i+2, i+3) for i in range(N-3)]
 
-        # =============================
-        # 📏 DISTANCE ANALYSIS
-        # =============================
-        st.markdown("## 📏 Distance Analysis")
+        exclusions = set(bonds + [(i, i+2) for i in range(N-2)])
+        one_four = set([(i, i+3) for i in range(N-3)])
 
-        if len(coords) > 1:
-            dists = np.linalg.norm(coords[:, None, :] - coords[None, :, :], axis=2)
+        # =================================================
+        # ⚙️ PARAMETERS (PLACEHOLDER → replace with CHARMM)
+        # =================================================
+        bond_k = [300]*len(bonds)
+        bond_r0 = [1.5]*len(bonds)
 
-            st.metric("Average Distance", f"{np.mean(dists):.3f}")
-            st.metric("Max Distance", f"{np.max(dists):.3f}")
+        angle_k = [40]*len(angles)
+        angle_theta0 = [np.pi/2]*len(angles)
 
-            st.line_chart(dists.flatten())
+        dih_k = [[2, 1]]*len(dihedrals)
+        dih_n = [[3, 2]]*len(dihedrals)
+        dih_delta = [[0, np.pi/2]]*len(dihedrals)
 
-        # =============================
-        # 🔬 LJ ENERGY
-        # =============================
-        st.markdown("## 🔬 Lennard-Jones Energy")
+        charges = np.random.uniform(-0.5, 0.5, N)
+        sigma = np.random.uniform(1.0, 2.0, N)
+        epsilon = np.random.uniform(0.1, 0.5, N)
 
-        epsilon = st.slider("Epsilon (ε)", 0.01, 1.0, 0.1)
-        sigma = st.slider("Sigma (σ)", 0.5, 3.0, 1.0)
+        # =================================================
+        # ⚛️ ENERGY COMPUTATION
+        # =================================================
+        Eb, Ea, Ed, Enb, Etot = total_energy(
+            coords,
+            bonds, bond_k, bond_r0,
+            angles, angle_k, angle_theta0,
+            dihedrals, dih_k, dih_n, dih_delta,
+            charges, sigma, epsilon,
+            exclusions, one_four
+        )
 
-        if len(coords) > 1:
-            dists = np.linalg.norm(coords[:, None, :] - coords[None, :, :], axis=2) + 1e-6
-            lj_energy = np.sum(4 * epsilon * ((sigma / dists)**12 - (sigma / dists)**6))
+        st.subheader("⚛️ Energy Components")
 
-            st.metric("Total LJ Energy", f"{lj_energy:.4f}")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Bond", f"{Eb:.3f}")
+        c2.metric("Angle", f"{Ea:.3f}")
+        c3.metric("Dihedral", f"{Ed:.3f}")
+        c4.metric("vdW + Coulomb", f"{Enb:.3f}")
+        c5.metric("Total", f"{Etot:.3f}")
 
-    # =========================================================
-    # 📊 CSV MODE (FORCE FIELD ANALYSIS)
-    # =========================================================
-    elif is_csv:
-        st.success("📊 Detected CSV force field dataset")
-
-        df = pd.read_csv(StringIO(file_text))
-
-        st.subheader("📊 Clean Dataset")
-        st.dataframe(df)
-
-        # =============================
-        # 🧠 DATA INTERPRETATION
-        # =============================
-        numeric_cols = df.select_dtypes(include=np.number).columns
-
-        st.markdown("## 🧠 Data Interpretation")
-
-        if len(numeric_cols) > 0:
-            st.success("✅ Numeric parameters detected")
-
-            st.write("### 📈 Statistical Summary")
-            st.dataframe(df[numeric_cols].describe())
-
-            # =============================
-            # 📊 VISUALIZATION
-            # =============================
-            col = st.selectbox("Select parameter", numeric_cols)
-            st.line_chart(df[col])
-
-        else:
-            st.warning("⚠️ No numeric data detected")
-
-        # =============================
-        # ⚛️ INTERACTION ENERGY
-        # =============================
-        st.markdown("## ⚛️ Atom Interaction Energy")
-
-        atom1 = st.selectbox("Atom 1", df["atom"])
-        atom2 = st.selectbox("Atom 2", df["atom"], index=1)
-
-        r = st.slider("Distance (r)", 0.5, 6.0, 2.0)
-
-        a1 = df[df["atom"] == atom1].iloc[0]
-        a2 = df[df["atom"] == atom2].iloc[0]
-
-        # =============================
-        # 🧪 MIXING RULES
-        # =============================
-        sigma = (a1["sigma"] + a2["sigma"]) / 2
-        epsilon = np.sqrt(a1["epsilon"] * a2["epsilon"])
-
-        # =============================
-        # ⚡ COULOMB ENERGY
-        # =============================
-        k_e = 138.935456  # kJ·mol⁻¹·nm·e⁻²
-        coulomb = k_e * (a1["charge"] * a2["charge"]) / r
-
-        # =============================
-        # 🌌 LENNARD-JONES
-        # =============================
-        lj = 4 * epsilon * ((sigma / r)**12 - (sigma / r)**6)
-
-        total_energy = lj + coulomb
-
-        # =============================
-        # 📊 OUTPUT
-        # =============================
-        col1, col2, col3 = st.columns(3)
-
-        col1.metric("LJ Energy", f"{lj:.4f}")
-        col2.metric("Coulomb Energy", f"{coulomb:.4f}")
-        col3.metric("Total Energy", f"{total_energy:.4f}")
-
-        st.info(f"""
-        σ = {sigma:.3f}  
-        ε = {epsilon:.3f}  
-        """)
-
-        # =============================
-        # 📈 ENERGY CURVE
-        # =============================
-        st.markdown("## 📈 Energy vs Distance")
-
-        r_values = np.linspace(0.5, 6, 100)
-        lj_curve = 4 * epsilon * ((sigma / r_values)**12 - (sigma / r_values)**6)
-        coul_curve = k_e * (a1["charge"] * a2["charge"]) / r_values
-
-        energy_df = pd.DataFrame({
-            "Distance": r_values,
-            "LJ": lj_curve,
-            "Coulomb": coul_curve,
-            "Total": lj_curve + coul_curve
-        })
-
-        st.line_chart(energy_df.set_index("Distance"))
-
-    # =========================================================
-    # ❌ UNKNOWN FORMAT
-    # =========================================================
+    # =====================================================
+    # 📊 CSV PARSER (CHARMM-like)
+    # =====================================================
     else:
-        st.error("❌ Unsupported file format")
+        st.success("📊 CSV Detected")
 
-    # =============================
-    # 🧠 AI INSIGHT
-    # =============================
-    st.markdown("## 🧠 AI Insight")
+        df = pd.read_csv(StringIO(text))
+        st.dataframe(df)
 
-    st.info("""
-    ✔ CSV → Parameter-based force field (ε, σ, charge)  
-    ✔ PDB → Structure-based coordinates  
+        required = {"charge", "sigma", "epsilon"}
 
-    👉 Together they define full molecular simulations.
-    """)
+        if not required.issubset(df.columns):
+            st.warning("⚠️ Missing FF parameters → auto-generating")
+            df["charge"] = df.get("charge", 0)
+            df["sigma"] = np.random.uniform(1, 2, len(df))
+            df["epsilon"] = np.random.uniform(0.1, 0.5, len(df))
+
+        st.subheader("⚛️ Pair Interaction")
+
+        i = st.selectbox("Particle i", df.index)
+        j = st.selectbox("Particle j", df.index, index=1)
+
+        r = st.slider("Distance", 0.5, 10.0, 2.0)
+
+        sig = (df.loc[i, "sigma"] + df.loc[j, "sigma"]) / 2
+        eps = np.sqrt(df.loc[i, "epsilon"] * df.loc[j, "epsilon"])
+
+        vdw = vdw_energy(r, eps, sig)
+        coul = coulomb_energy(df.loc[i, "charge"], df.loc[j, "charge"], r)
+
+        st.metric("vdW Energy", f"{vdw:.4f}")
+        st.metric("Coulomb Energy", f"{coul:.4f}")
+        st.metric("Total", f"{vdw + coul:.4f}")
 
 else:
-    st.warning("Please upload a dataset file.")
+    st.info("Upload a dataset to begin")
