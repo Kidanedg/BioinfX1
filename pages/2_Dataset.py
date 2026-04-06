@@ -1,230 +1,236 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
-from io import StringIO
+import pandas as pd
+import re
+import tempfile
+import os
 
-st.set_page_config(page_title="Molecular Mechanics Engine", layout="wide")
+# =============================
+# OPENMM IMPORTS
+# =============================
+try:
+    from openmm.app import *
+    from openmm import *
+    from openmm.unit import *
+except:
+    st.error("Install OpenMM in requirements.txt")
+    st.stop()
 
-st.title("🧬 Molecular Mechanics Platform (CHARMM-style)")
+# =============================
+# PAGE CONFIG
+# =============================
+st.set_page_config(page_title="Full CHARMM Engine", layout="wide")
+st.title("🧬 Full Molecular Mechanics Platform (CHARMM + AMBER + Docking)")
 
-# =========================================================
-# ⚛️ ENERGY FUNCTIONS
-# =========================================================
+# =============================
+# SESSION STATE
+# =============================
+for key in ["coords", "elements", "topology", "system"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
-def bond_energy(coords, bonds, k_b, r0):
-    E = 0
-    for (i, j), kb, r_eq in zip(bonds, k_b, r0):
-        r = np.linalg.norm(coords[i] - coords[j])
-        E += kb * (r - r_eq)**2
-    return E
+# =============================
+# FILE UPLOAD
+# =============================
+st.sidebar.header("📂 Upload Files")
 
+pdb_file = st.sidebar.file_uploader("Upload PDB", type=["pdb"])
+prm_file = st.sidebar.file_uploader("Upload CHARMM .prm", type=["prm"])
+rtf_file = st.sidebar.file_uploader("Upload CHARMM .rtf", type=["rtf"])
+frcmod_file = st.sidebar.file_uploader("Upload AMBER .frcmod", type=["frcmod"])
 
-def angle_energy(coords, angles, k_theta, theta0):
-    E = 0
-    for (i, j, k), kt, th0 in zip(angles, k_theta, theta0):
-        v1 = coords[i] - coords[j]
-        v2 = coords[k] - coords[j]
+# =============================
+# 1. PARAMETER PARSER
+# =============================
+def parse_charmm_prm(file):
+    params = {"bonds": [], "angles": [], "dihedrals": [], "vdw": []}
+    
+    for line in file:
+        line = line.decode("utf-8").strip()
+        
+        if line.startswith("BOND"):
+            parts = line.split()
+            params["bonds"].append(parts)
+        
+        elif line.startswith("ANGLE"):
+            params["angles"].append(line.split())
+        
+        elif line.startswith("DIHEDRAL"):
+            params["dihedrals"].append(line.split())
+        
+        elif line.startswith("NONBONDED"):
+            params["vdw"].append(line.split())
+    
+    return params
 
-        cos_theta = np.dot(v1, v2) / (
-            np.linalg.norm(v1) * np.linalg.norm(v2)
-        )
-        theta = np.arccos(np.clip(cos_theta, -1, 1))
-        E += kt * (theta - th0)**2
-    return E
+# =============================
+# 2. AMBER FRCMOD PARSER
+# =============================
+def parse_frcmod(file):
+    params = {"vdw": [], "bonds": [], "angles": []}
+    
+    for line in file:
+        line = line.decode("utf-8").strip()
+        if len(line) < 2:
+            continue
+        
+        if "MASS" in line:
+            continue
+        
+        if len(line.split()) > 2:
+            params["vdw"].append(line.split())
+    
+    return params
 
-
-def dihedral_energy(coords, dihedrals, k_phi, n, delta):
-    E = 0
-    for idx, (i, j, k, l) in enumerate(dihedrals):
-
-        b1 = coords[j] - coords[i]
-        b2 = coords[k] - coords[j]
-        b3 = coords[l] - coords[k]
-
-        n1 = np.cross(b1, b2)
-        n2 = np.cross(b2, b3)
-
-        n1 /= np.linalg.norm(n1)
-        n2 /= np.linalg.norm(n2)
-
-        phi = np.arccos(np.clip(np.dot(n1, n2), -1, 1))
-
-        for t in range(len(k_phi[idx])):
-            E += k_phi[idx][t] * (
-                1 + np.cos(n[idx][t] * phi - delta[idx][t])
-            )
-    return E
-
-
-# =========================================================
-# 🌌 NONBONDED (vdW + Coulomb)
-# =========================================================
-def vdw_energy(r, epsilon, sigma):
-    return 4 * epsilon * ((sigma / r)**12 - (sigma / r)**6)
-
-
-def coulomb_energy(q1, q2, r):
-    k_e = 138.935456
-    return k_e * q1 * q2 / r
-
-
-def nonbonded_energy(coords, charges, sigma, epsilon,
-                     exclusions=set(), one_four=set(), scale_14=0.5):
-
-    E = 0
-    N = len(coords)
-
-    for i in range(N):
-        for j in range(i+1, N):
-
-            if (i, j) in exclusions:
+# =============================
+# 3. VAN DER WAALS ENERGY
+# =============================
+def compute_vdw(coords):
+    n = len(coords)
+    energy = 0.0
+    
+    for i in range(n):
+        for j in range(i+1, n):
+            r = np.linalg.norm(coords[i] - coords[j])
+            if r < 0.1:
                 continue
+            
+            epsilon = 0.2
+            sigma = 3.5
+            
+            # Lennard-Jones
+            lj = 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
+            energy += lj
+    
+    return energy
 
-            r = np.linalg.norm(coords[i] - coords[j]) + 1e-9
+# =============================
+# 4. LOAD PDB INTO OPENMM
+# =============================
+def load_structure(pdb_file):
+    pdb = PDBFile(pdb_file)
+    return pdb
 
-            sig = (sigma[i] + sigma[j]) / 2
-            eps = np.sqrt(epsilon[i] * epsilon[j])
+# =============================
+# 5. CREATE SYSTEM (CHARMM/AMBER)
+# =============================
+def create_system(pdb):
+    forcefield = ForceField(
+        'amber14-all.xml',
+        'amber14/tip3pfb.xml'
+    )
+    
+    system = forcefield.createSystem(
+        pdb.topology,
+        nonbondedMethod=PME,
+        constraints=HBonds
+    )
+    
+    return system
 
-            vdw = vdw_energy(r, eps, sig)
-            coul = coulomb_energy(charges[i], charges[j], r)
+# =============================
+# 6. GPU SIMULATION
+# =============================
+def run_simulation(pdb):
+    system = create_system(pdb)
+    
+    integrator = LangevinIntegrator(
+        300*kelvin,
+        1/picosecond,
+        0.002*picoseconds
+    )
+    
+    platform = Platform.getPlatformByName("CUDA")  # GPU
+    
+    simulation = Simulation(
+        pdb.topology,
+        system,
+        integrator,
+        platform
+    )
+    
+    simulation.context.setPositions(pdb.positions)
+    
+    simulation.minimizeEnergy()
+    
+    state = simulation.context.getState(getEnergy=True)
+    energy = state.getPotentialEnergy()
+    
+    return energy
 
-            if (i, j) in one_four:
-                vdw *= scale_14
-                coul *= scale_14
+# =============================
+# 7. DOCKING (SIMPLE SCORING)
+# =============================
+def docking_score(protein_coords, ligand_coords):
+    score = 0.0
+    
+    for p in protein_coords:
+        for l in ligand_coords:
+            r = np.linalg.norm(p - l)
+            if r < 8.0:
+                score += 1 / (r + 1e-6)
+    
+    return score
 
-            E += vdw + coul
+# =============================
+# MAIN WORKFLOW
+# =============================
+if pdb_file:
+    st.success("✅ PDB Loaded")
+    
+    pdb = load_structure(pdb_file)
+    
+    coords = np.array([
+        [atom.x, atom.y, atom.z]
+        for atom in pdb.positions.value_in_unit(nanometer)
+    ])
+    
+    st.session_state.coords = coords
+    
+    st.subheader("📊 Energy Calculation")
+    
+    if st.button("Compute van der Waals Energy"):
+        vdw_energy = compute_vdw(coords)
+        st.write("💥 VdW Energy:", vdw_energy)
+    
+    if st.button("Run OpenMM GPU Simulation"):
+        energy = run_simulation(pdb)
+        st.write("⚡ Potential Energy:", energy)
 
-    return E
+# =============================
+# DOCKING SECTION
+# =============================
+st.subheader("🧬 Protein–Ligand Docking")
 
+ligand_file = st.file_uploader("Upload Ligand PDB", type=["pdb"])
 
-# =========================================================
-# ⚛️ TOTAL ENERGY
-# =========================================================
-def total_energy(coords, bonds, bond_k, bond_r0,
-                 angles, angle_k, angle_theta0,
-                 dihedrals, dih_k, dih_n, dih_delta,
-                 charges, sigma, epsilon,
-                 exclusions, one_four):
+if ligand_file and pdb_file:
+    protein = load_structure(pdb_file)
+    ligand = load_structure(ligand_file)
+    
+    protein_coords = np.array([
+        [a.x, a.y, a.z]
+        for a in protein.positions.value_in_unit(nanometer)
+    ])
+    
+    ligand_coords = np.array([
+        [a.x, a.y, a.z]
+        for a in ligand.positions.value_in_unit(nanometer)
+    ])
+    
+    if st.button("Compute Docking Score"):
+        score = docking_score(protein_coords, ligand_coords)
+        st.write("🔗 Binding Score:", score)
 
-    Eb = bond_energy(coords, bonds, bond_k, bond_r0)
-    Ea = angle_energy(coords, angles, angle_k, angle_theta0)
-    Ed = dihedral_energy(coords, dihedrals, dih_k, dih_n, dih_delta)
-    Enb = nonbonded_energy(coords, charges, sigma, epsilon,
-                           exclusions, one_four)
+# =============================
+# PARAMETER DISPLAY
+# =============================
+st.subheader("📄 Parameter Files")
 
-    return Eb, Ea, Ed, Enb, Eb + Ea + Ed + Enb
+if prm_file:
+    params = parse_charmm_prm(prm_file)
+    st.write("CHARMM Parameters:", params)
 
-
-# =========================================================
-# 📂 FILE UPLOAD
-# =========================================================
-uploaded_file = st.file_uploader("Upload PDB or CSV (CHARMM/AMBER style)")
-
-if uploaded_file:
-
-    text = uploaded_file.read().decode("utf-8")
-    lines = text.splitlines()
-
-    # =====================================================
-    # 🧬 PDB PARSER
-    # =====================================================
-    if any(line.startswith(("ATOM", "HETATM")) for line in lines):
-        st.success("🧬 PDB Detected")
-
-        atoms, coords = [], []
-
-        for line in lines:
-            if line.startswith(("ATOM", "HETATM")):
-                parts = line.split()
-                atoms.append(parts[2])
-                coords.append([float(parts[6]), float(parts[7]), float(parts[8])])
-
-        coords = np.array(coords)
-        N = len(coords)
-
-        st.write("Atoms:", atoms)
-
-        # =================================================
-        # 🔗 AUTO TOPOLOGY
-        # =================================================
-        bonds = [(i, i+1) for i in range(N-1)]
-        angles = [(i, i+1, i+2) for i in range(N-2)]
-        dihedrals = [(i, i+1, i+2, i+3) for i in range(N-3)]
-
-        exclusions = set(bonds + [(i, i+2) for i in range(N-2)])
-        one_four = set([(i, i+3) for i in range(N-3)])
-
-        # =================================================
-        # ⚙️ PARAMETERS (PLACEHOLDER → replace with CHARMM)
-        # =================================================
-        bond_k = [300]*len(bonds)
-        bond_r0 = [1.5]*len(bonds)
-
-        angle_k = [40]*len(angles)
-        angle_theta0 = [np.pi/2]*len(angles)
-
-        dih_k = [[2, 1]]*len(dihedrals)
-        dih_n = [[3, 2]]*len(dihedrals)
-        dih_delta = [[0, np.pi/2]]*len(dihedrals)
-
-        charges = np.random.uniform(-0.5, 0.5, N)
-        sigma = np.random.uniform(1.0, 2.0, N)
-        epsilon = np.random.uniform(0.1, 0.5, N)
-
-        # =================================================
-        # ⚛️ ENERGY COMPUTATION
-        # =================================================
-        Eb, Ea, Ed, Enb, Etot = total_energy(
-            coords,
-            bonds, bond_k, bond_r0,
-            angles, angle_k, angle_theta0,
-            dihedrals, dih_k, dih_n, dih_delta,
-            charges, sigma, epsilon,
-            exclusions, one_four
-        )
-
-        st.subheader("⚛️ Energy Components")
-
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Bond", f"{Eb:.3f}")
-        c2.metric("Angle", f"{Ea:.3f}")
-        c3.metric("Dihedral", f"{Ed:.3f}")
-        c4.metric("vdW + Coulomb", f"{Enb:.3f}")
-        c5.metric("Total", f"{Etot:.3f}")
-
-    # =====================================================
-    # 📊 CSV PARSER (CHARMM-like)
-    # =====================================================
-    else:
-        st.success("📊 CSV Detected")
-
-        df = pd.read_csv(StringIO(text))
-        st.dataframe(df)
-
-        required = {"charge", "sigma", "epsilon"}
-
-        if not required.issubset(df.columns):
-            st.warning("⚠️ Missing FF parameters → auto-generating")
-            df["charge"] = df.get("charge", 0)
-            df["sigma"] = np.random.uniform(1, 2, len(df))
-            df["epsilon"] = np.random.uniform(0.1, 0.5, len(df))
-
-        st.subheader("⚛️ Pair Interaction")
-
-        i = st.selectbox("Particle i", df.index)
-        j = st.selectbox("Particle j", df.index, index=1)
-
-        r = st.slider("Distance", 0.5, 10.0, 2.0)
-
-        sig = (df.loc[i, "sigma"] + df.loc[j, "sigma"]) / 2
-        eps = np.sqrt(df.loc[i, "epsilon"] * df.loc[j, "epsilon"])
-
-        vdw = vdw_energy(r, eps, sig)
-        coul = coulomb_energy(df.loc[i, "charge"], df.loc[j, "charge"], r)
-
-        st.metric("vdW Energy", f"{vdw:.4f}")
-        st.metric("Coulomb Energy", f"{coul:.4f}")
-        st.metric("Total", f"{vdw + coul:.4f}")
-
-else:
-    st.info("Upload a dataset to begin")
+if frcmod_file:
+    params = parse_frcmod(frcmod_file)
+    st.write("AMBER Parameters:", params)
