@@ -1,4 +1,242 @@
 # =============================
+# FULL CHARMM DATASET GENERATOR
+# =============================
+import streamlit as st
+import os
+import copy
+import numpy as np
+import pandas as pd
+from io import StringIO
+
+# OpenMM
+from openmm.app import *
+from openmm import *
+from openmm.unit import *
+
+# =============================
+# UI
+# =============================
+st.set_page_config(layout="wide")
+st.title("🧬 CHARMM Dataset Generator (Full Energy + vdW)")
+
+OUT = "dataset_output"
+os.makedirs(OUT, exist_ok=True)
+
+uploaded_pdb = st.file_uploader("Upload PDB File", type=["pdb"])
+
+# =============================
+# SAFE LOAD
+# =============================
+def load_pdb(uploaded):
+    try:
+        pdb_str = uploaded.read().decode("utf-8")
+        return PDBFile(StringIO(pdb_str))
+    except Exception as e:
+        st.error(f"PDB load error: {e}")
+        return None
+
+# =============================
+# PREPARE STRUCTURE
+# =============================
+def prepare(pdb, forcefield):
+    try:
+        modeller = Modeller(pdb.topology, pdb.positions)
+        modeller.addHydrogens(forcefield)
+        return modeller
+    except:
+        return pdb
+
+# =============================
+# SAFE SYSTEM
+# =============================
+def create_system(topology, forcefield):
+    try:
+        if topology.getPeriodicBoxVectors() is None:
+            st.warning("No box → vacuum simulation")
+            return forcefield.createSystem(
+                topology,
+                nonbondedMethod=NoCutoff,
+                constraints=HBonds
+            )
+        else:
+            return forcefield.createSystem(
+                topology,
+                nonbondedMethod=PME,
+                nonbondedCutoff=1.0*nanometer,
+                constraints=HBonds
+            )
+    except Exception as e:
+        st.error(e)
+        return None
+
+# =============================
+# vdW ENERGY
+# =============================
+def compute_vdw(system, simulation):
+    try:
+        system_copy = copy.deepcopy(system)
+
+        for force in system_copy.getForces():
+            if isinstance(force, NonbondedForce):
+                for i in range(force.getNumParticles()):
+                    q, s, e = force.getParticleParameters(i)
+                    force.setParticleParameters(i, 0.0, s, e)
+
+        integrator = VerletIntegrator(0.001)
+        sim = Simulation(simulation.topology, system_copy, integrator)
+
+        sim.context.setPositions(
+            simulation.context.getState(getPositions=True).getPositions()
+        )
+
+        state = sim.context.getState(getEnergy=True)
+        return state.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
+    except:
+        return np.nan
+
+# =============================
+# DISTANCE FEATURE
+# =============================
+def compute_distance(simulation):
+    try:
+        pos = simulation.context.getState(getPositions=True).getPositions(asNumpy=True)
+        return np.linalg.norm(pos[0] - pos[1])
+    except:
+        return np.nan
+
+# =============================
+# ENERGY
+# =============================
+def get_energy(system, simulation):
+    try:
+        state = simulation.context.getState(getEnergy=True)
+        total = state.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
+
+        energies = {"Total": total}
+
+        for i, force in enumerate(system.getForces()):
+            state = simulation.context.getState(getEnergy=True, groups={i})
+            e = state.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
+
+            name = force.__class__.__name__
+
+            if "HarmonicBondForce" in name:
+                energies["Bond"] = e
+            elif "HarmonicAngleForce" in name:
+                energies["Angle"] = e
+            elif "PeriodicTorsionForce" in name:
+                energies["Dihedral"] = e
+            elif "NonbondedForce" in name:
+                energies["Nonbonded"] = e
+
+        # vdW split
+        vdw = compute_vdw(system, simulation)
+        energies["vdW"] = vdw
+        energies["Electrostatic"] = energies.get("Nonbonded", 0) - vdw
+
+        return energies
+
+    except Exception as e:
+        return {"error": str(e)}
+
+# =============================
+# DATASET GENERATOR
+# =============================
+def generate_dataset(simulation, system, steps=1000, interval=10):
+
+    data = []
+
+    for step in range(steps):
+        simulation.step(1)
+
+        if step % interval == 0:
+            e = get_energy(system, simulation)
+
+            row = {
+                "Step": step,
+                "Bond": e.get("Bond", 0),
+                "Angle": e.get("Angle", 0),
+                "Dihedral": e.get("Dihedral", 0),
+                "vdW": e.get("vdW", 0),
+                "Electrostatic": e.get("Electrostatic", 0),
+                "Total": e.get("Total", 0),
+                "Dist_0_1": compute_distance(simulation)
+            }
+
+            data.append(row)
+
+    return pd.DataFrame(data)
+
+# =============================
+# MAIN
+# =============================
+if uploaded_pdb:
+
+    pdb = load_pdb(uploaded_pdb)
+
+    if pdb:
+        st.success("PDB loaded")
+
+        # Force field
+        try:
+            ff = ForceField("charmm36.xml", "charmm36/water.xml")
+        except:
+            st.error("CHARMM files missing")
+            st.stop()
+
+        modeller = prepare(pdb, ff)
+
+        system = create_system(modeller.topology, ff)
+        if system is None:
+            st.stop()
+
+        # Simulation
+        integrator = LangevinIntegrator(
+            300*kelvin,
+            1/picosecond,
+            0.002*picoseconds
+        )
+
+        simulation = Simulation(
+            modeller.topology,
+            system,
+            integrator
+        )
+
+        simulation.context.setPositions(modeller.positions)
+        simulation.minimizeEnergy()
+
+        steps = st.slider("Steps", 100, 5000, 1000)
+        interval = st.slider("Sampling Interval", 1, 50, 10)
+
+        if st.button("🚀 Generate Dataset"):
+
+            df = generate_dataset(simulation, system, steps, interval)
+
+            st.success("Dataset ready")
+            st.dataframe(df.head())
+
+            df.to_csv(f"{OUT}/dataset.csv", index=False)
+
+            st.download_button(
+                "Download CSV",
+                df.to_csv(index=False),
+                "charmm_dataset.csv"
+            )
+
+# =============================
+# THEORY
+# =============================
+st.markdown("## 📘 Energy Model")
+
+st.latex("E_{total} = E_b + E_a + E_d + E_{vdW} + E_{elec}")
+st.latex("E_b = k_b (r - r_0)^2")
+st.latex("E_a = k_\\theta (\\theta - \\theta_0)^2")
+st.latex("E_d = k_d [1 + \\cos(n\\phi - \\delta)]")
+st.latex("V_{vdW} = 4\\epsilon [(\\sigma/r)^{12} - (\\sigma/r)^6]")
+st.latex("E_{elec} = \\frac{q_1 q_2}{4\\pi \\epsilon r}")
+
+st.info("✅ Dataset includes full CHARMM energy decomposition + geometry features")# =============================
 # FULL MOLECULAR MECHANICS APP
 # ERROR-PROOF VERSION
 # =============================
