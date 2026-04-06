@@ -388,12 +388,26 @@ if page == "🧬 Structure Analysis":
         st.markdown("### 📂 Upload Required")
         st.warning("Please upload a protein file to begin analysis")
 # =============================
-# ⚛️ SIMULATION (ENHANCED)
+# ⚛️ SIMULATION (PREMIUM UI)
 # =============================
 elif page == "⚛️ Simulation":
 
-    st.markdown("## ⚛️ Molecular Simulation Lab")
-    st.caption("Analyze structure, compute energies, and explore atomic behavior")
+    # =============================
+    # 🎨 SECTION HEADER
+    # =============================
+    st.markdown("""
+    <div style="
+        padding:20px;
+        border-radius:15px;
+        background: linear-gradient(90deg,#0f2027,#203a43,#2c5364);
+        color:white;
+        text-align:center;
+        box-shadow:0px 4px 20px rgba(0,0,0,0.4);
+    ">
+        <h2>⚛️ Molecular Simulation Lab</h2>
+        <p>Analyze structure • Compute energy • Explore atomic interactions</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     if protein_file:
         protein_data = protein_file.read().decode("utf-8")
@@ -407,42 +421,81 @@ elif page == "⚛️ Simulation":
         coords = np.array([a.get_coord() for a in atoms])
 
         # =============================
-        # 📊 SUMMARY CARDS
+        # 📊 DASHBOARD (GLASS CARDS)
         # =============================
+        st.markdown("### 📊 System Overview")
+
         c1, c2, c3 = st.columns(3)
-        c1.metric("🧬 Total Atoms", len(coords))
-        c2.metric("📏 Dimensions", f"{coords.shape}")
-        c3.metric("📍 Center (Å)", f"{np.mean(coords):.2f}")
+
+        def card(title, value):
+            st.markdown(f"""
+            <div style="
+                background: rgba(255,255,255,0.06);
+                padding:20px;
+                border-radius:15px;
+                text-align:center;
+                backdrop-filter: blur(10px);
+                box-shadow:0px 4px 15px rgba(0,0,0,0.3);
+            ">
+                <h4 style="color:#00d4ff;">{title}</h4>
+                <h2>{value}</h2>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with c1:
+            card("🧬 Total Atoms", len(coords))
+        with c2:
+            card("📏 Dimensions", coords.shape)
+        with c3:
+            card("📍 Mean Position", f"{np.mean(coords):.2f}")
 
         st.success("✅ Protein structure loaded successfully")
 
         # =============================
-        # 🧊 3D VISUALIZATION
+        # 🧊 VIEWER
         # =============================
-        st.markdown("### 🧊 3D Structure Viewer")
+        st.markdown("### 🧊 3D Molecular Structure")
         show_3d(protein_data)
 
         # =============================
-        # ⚙️ SIMULATION CONTROLS
+        # ⚙️ CONTROLS PANEL
         # =============================
-        st.markdown("### ⚙️ Simulation Settings")
+        st.markdown("### ⚙️ Simulation Control Panel")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            sample_size = st.slider("Sample Atoms (speed control)", 100, len(coords), min(1000, len(coords)))
-        with col2:
-            method = st.selectbox("Energy Model", ["Distance Sum", "Lennard-Jones (approx)"])
-        with col3:
-            run_btn = st.button("⚡ Run Simulation")
+        box1, box2 = st.columns([2,1])
+
+        with box1:
+            sample_size = st.slider(
+                "🔬 Sample Size (Performance Control)",
+                100, len(coords),
+                min(1000, len(coords)),
+                help="Reduce atoms to speed up simulation"
+            )
+
+            method = st.radio(
+                "⚛️ Energy Model",
+                ["Distance Sum", "Lennard-Jones (approx)"],
+                horizontal=True
+            )
+
+        with box2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            run_btn = st.button("⚡ Run Simulation", use_container_width=True)
 
         # =============================
-        # ⚡ RUN SIMULATION
+        # ⚡ SIMULATION EXECUTION
         # =============================
         if run_btn:
 
-            with st.spinner("Running molecular simulation..."):
+            progress = st.progress(0)
+
+            with st.spinner("🧠 Running molecular computation..."):
 
                 coords_sample = coords[:sample_size]
+
+                # Fake progress animation (UX boost)
+                for i in range(100):
+                    progress.progress(i + 1)
 
                 # -----------------------------
                 # ENERGY CALCULATION
@@ -462,31 +515,35 @@ elif page == "⚛️ Simulation":
                             if r > 0:
                                 energy += (1/r**12 - 2/r**6)
 
+                progress.empty()
+
                 # =============================
-                # 📈 RESULTS DISPLAY
+                # 📈 RESULTS PANEL
                 # =============================
+                st.markdown("### 📈 Simulation Results")
+
                 r1, r2 = st.columns(2)
                 r1.metric("⚡ System Energy", f"{energy:.3f}")
-                r2.metric("🔬 Sampled Atoms", sample_size)
+                r2.metric("🔬 Sample Size", sample_size)
 
-                st.success("Simulation completed successfully!")
+                st.success("🎉 Simulation completed successfully!")
 
                 # =============================
                 # 📊 VISUAL ANALYTICS
                 # =============================
-                st.markdown("### 📊 Atomic Coordinate Distribution")
+                st.markdown("### 📊 Atomic Distribution")
 
                 fig, ax = plt.subplots()
                 ax.hist(coords_sample.flatten(), bins=50)
-                ax.set_title("Atomic Distribution")
+                ax.set_title("Atomic Coordinate Distribution")
                 ax.set_xlabel("Coordinate Value")
                 ax.set_ylabel("Frequency")
                 st.pyplot(fig)
 
                 # =============================
-                # 🔍 DISTANCE HEATMAP (NEW)
+                # 🔥 HEATMAP
                 # =============================
-                st.markdown("### 🔥 Pairwise Distance Heatmap")
+                st.markdown("### 🔥 Distance Interaction Map")
 
                 dist_matrix = np.linalg.norm(
                     coords_sample[:, None, :] - coords_sample[None, :, :],
@@ -495,13 +552,12 @@ elif page == "⚛️ Simulation":
 
                 fig2, ax2 = plt.subplots()
                 im = ax2.imshow(dist_matrix)
-                ax2.set_title("Distance Matrix")
+                ax2.set_title("Pairwise Distance Matrix")
                 plt.colorbar(im, ax=ax2)
                 st.pyplot(fig2)
 
     else:
-        st.warning("⚠️ Please upload a protein PDB file to start simulation")
-# =============================
+        st.warning("⚠️ Upload a protein PDB file to start simulation")# =============================
 # 🧪 DOCKING (ENHANCED)
 # =============================
 elif page == "🧪 Docking":
