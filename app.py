@@ -479,7 +479,7 @@ def ai_interpret_simulation(energy, sample_size, method, n_atoms):
 # =============================
 # ⚛️ SIMULATION (OPTIMIZED)
 # =============================
-elif page == "⚛️ Simulation":
+if page == "⚛️ Simulation":
 
     st.markdown("""
     <div style="
