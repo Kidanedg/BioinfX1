@@ -6,6 +6,36 @@ import matplotlib.pyplot as plt
 from io import StringIO
 
 # =============================
+# CONFIG
+# =============================
+st.set_page_config(
+    page_title="🧬 BioMolecular AI Platform",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# =============================
+# CUSTOM CSS (🔥 UI BOOST)
+# =============================
+st.markdown("""
+<style>
+body {
+    background-color: #0e1117;
+    color: #ffffff;
+}
+.metric-box {
+    background: #1c1f26;
+    padding: 15px;
+    border-radius: 12px;
+    text-align: center;
+}
+h1, h2, h3 {
+    color: #00d4ff;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =============================
 # SAFE IMPORT
 # =============================
 try:
@@ -13,8 +43,6 @@ try:
 except:
     st.error("Install Biopython: pip install biopython")
     st.stop()
-
-st.set_page_config(page_title="🧬 BioMolecular AI Platform", layout="wide")
 
 # =============================
 # LOGIN SYSTEM
@@ -25,59 +53,99 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
-    st.title("🔐 Secure Login")
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
+    st.markdown("# 🔐 BioMolecular Platform Login")
 
-    if st.button("Login"):
-        if USERS.get(u) == p:
-            st.session_state.logged_in = True
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+
+        if st.button("🚀 Login", use_container_width=True):
+            if USERS.get(u) == p:
+                st.session_state.logged_in = True
+                st.rerun()
+            else:
+                st.error("❌ Invalid credentials")
+
     st.stop()
 
 # =============================
 # SIDEBAR
 # =============================
-st.sidebar.title("📊 Navigation")
+st.sidebar.title("🧭 Navigation Panel")
 
 page = st.sidebar.radio(
     "Select Module",
-    ["Simulation", "Docking & Binding", "Structure Analysis"]
+    ["🧬 Structure Analysis", "⚛️ Simulation", "🧪 Docking"]
 )
 
-protein_file = st.sidebar.file_uploader("Upload Protein (PDB)", type="pdb")
-ligand_file = st.sidebar.file_uploader("Upload Ligand (PDB)", type="pdb")
-forcefield_file = st.sidebar.file_uploader("Upload Force Field (CSV)", type="csv")
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 Input Data")
+
+protein_file = st.sidebar.file_uploader("Protein (PDB)", type="pdb")
+ligand_file = st.sidebar.file_uploader("Ligand (PDB)", type="pdb")
+forcefield_file = st.sidebar.file_uploader("Force Field (CSV)", type="csv")
 
 # =============================
-# 3D VIEWER (SCIENTIFIC STYLE)
+# 3D VIEWER (UPGRADED)
 # =============================
 def show_3d(protein, ligand=None):
-    html = f"""
-    <div id="viewer" style="width:100%; height:600px;"></div>
-    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
-    <script>
-        let viewer = $3Dmol.createViewer("viewer", {{backgroundColor: "black"}});
+    ligand_js = ""
 
-        // Protein
+    if ligand:
+        ligand_js = f"""
+        viewer.addModel(`{ligand}`, 'pdb');
+        viewer.setStyle({{model:1}}, {{
+            stick: {{colorscheme:'cyanCarbon'}},
+            sphere: {{scale:0.3}}
+        }});
+        """
+
+    html = f"""
+    <div id="viewer" style="width:100%; height:650px;"></div>
+    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+
+    <script>
+        let viewer = $3Dmol.createViewer("viewer", {{
+            backgroundColor: "black"
+        }});
+
         viewer.addModel(`{protein}`, "pdb");
+
         viewer.setStyle({{}}, {{
             cartoon: {{color: 'spectrum'}}
         }});
 
-        // Ligand
-        {"viewer.addModel(`" + ligand + "`, 'pdb'); viewer.setStyle({model:1}, {stick:{colorscheme:'greenCarbon'}});" if ligand else ""}
+        {ligand_js}
+
+        viewer.addSurface($3Dmol.SurfaceType.VDW, {{
+            opacity: 0.4,
+            color: "white"
+        }});
+
+        viewer.setHoverable({{}}, true,
+            function(atom, viewer) {{
+                if (atom) {{
+                    viewer.addLabel(atom.resn + " " + atom.resi, {{
+                        position: atom,
+                        backgroundColor: "black",
+                        fontColor: "white"
+                    }});
+                }}
+            }},
+            function(atom, viewer) {{
+                viewer.removeAllLabels();
+            }}
+        );
 
         viewer.zoomTo();
         viewer.render();
     </script>
     """
-    components.html(html, height=600)
+    components.html(html, height=650)
 
 # =============================
-# GEOMETRY FUNCTIONS
+# GEOMETRY
 # =============================
 def distance(a, b):
     return np.linalg.norm(a - b)
@@ -91,53 +159,47 @@ def detect_binding_site(protein_coords, ligand_coords):
                 break
     return list(set(site))
 
-# =============================
-# FORCE FIELD LOADING
-# =============================
-def load_forcefield(file):
-    df = pd.read_csv(file)
-    return dict(zip(df["atom"], df["charge"]))
-
-# =============================
-# ENERGY CALCULATION
-# =============================
 def compute_binding_energy(p_coords, l_coords):
     energy = 0
     for p in p_coords:
         for l in l_coords:
             r = distance(p, l) + 1e-6
-            energy += -1 / r   # simplified attractive term
+            energy += -1 / r
     return energy
 
-# =============================
-# STRUCTURE ANALYSIS PAGE
-# =============================
-if page == "Structure Analysis":
-
-    st.title("🧬 Protein Structure Insight")
-
-    st.markdown("## Structural Levels")
-
-    st.markdown("""
-    🔹 Primary: Sequence  
-    🔹 Secondary: α-helix / β-sheet  
-    🔹 Tertiary: Folding  
-    🔹 Quaternary: Multi-chain  
-    """)
-
-    st.markdown("## 🧪 Visualization Example")
-
-    # Demo image section (handled by UI, no code needed)
+def load_forcefield(file):
+    df = pd.read_csv(file)
+    return dict(zip(df["atom"], df["charge"]))
 
 # =============================
-# SIMULATION PAGE
+# STRUCTURE PAGE
 # =============================
-elif page == "Simulation":
+if page == "🧬 Structure Analysis":
+
+    st.title("🧬 Protein Structure Analysis")
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Primary", "Sequence")
+    col2.metric("Secondary", "α / β")
+    col3.metric("Tertiary", "3D Fold")
+    col4.metric("Quaternary", "Multi-chain")
+
+    st.markdown("---")
+
+    if protein_file:
+        protein_data = protein_file.read().decode("utf-8")
+        show_3d(protein_data)
+    else:
+        st.info("Upload a protein to visualize")
+
+# =============================
+# SIMULATION
+# =============================
+elif page == "⚛️ Simulation":
 
     st.title("⚛️ Molecular Simulation")
 
     if protein_file:
-
         protein_data = protein_file.read().decode("utf-8")
 
         parser = PDBParser(QUIET=True)
@@ -145,31 +207,36 @@ elif page == "Simulation":
         atoms = list(structure.get_atoms())
         coords = np.array([a.get_coord() for a in atoms])
 
-        st.success(f"Loaded Protein: {len(coords)} atoms")
+        st.success(f"Loaded {len(coords)} atoms")
 
         show_3d(protein_data)
 
-        if st.button("Run Energy Simulation"):
+        if st.button("⚡ Run Simulation"):
 
-            energy = np.sum([distance(coords[i], coords[j])
-                            for i in range(len(coords))
-                            for j in range(i+1, len(coords))])
+            energy = np.sum([
+                distance(coords[i], coords[j])
+                for i in range(len(coords))
+                for j in range(i+1, len(coords))
+            ])
 
-            st.metric("System Energy", f"{energy:.2f}")
+            c1, c2 = st.columns(2)
+            c1.metric("System Energy", f"{energy:.2f}")
+            c2.metric("Atoms", len(coords))
 
             fig, ax = plt.subplots()
-            ax.hist(coords.flatten(), bins=50)
+            ax.hist(coords.flatten(), bins=50, color="cyan")
+            ax.set_title("Atomic Distribution")
             st.pyplot(fig)
 
     else:
-        st.info("Upload a protein file")
+        st.warning("Upload a protein")
 
 # =============================
-# DOCKING PAGE
+# DOCKING
 # =============================
-elif page == "Docking & Binding":
+elif page == "🧪 Docking":
 
-    st.title("🧪 Docking & Binding Analysis")
+    st.title("🧪 Docking & Binding")
 
     if protein_file and ligand_file:
 
@@ -181,40 +248,33 @@ elif page == "Docking & Binding":
         prot = parser.get_structure("p", StringIO(prot_data))
         lig = parser.get_structure("l", StringIO(lig_data))
 
-        p_atoms = list(prot.get_atoms())
-        l_atoms = list(lig.get_atoms())
+        p_coords = np.array([a.get_coord() for a in prot.get_atoms()])
+        l_coords = np.array([a.get_coord() for a in lig.get_atoms()])
 
-        p_coords = np.array([a.get_coord() for a in p_atoms])
-        l_coords = np.array([a.get_coord() for a in l_atoms])
-
-        # Docking (center alignment)
+        # Docking
         shift = p_coords.mean(axis=0) - l_coords.mean(axis=0)
         l_coords += shift
 
+        site = detect_binding_site(p_coords, l_coords)
+        energy = compute_binding_energy(p_coords, l_coords)
+
         st.success("Docking Completed")
 
-        # Binding Site Detection
-        site = detect_binding_site(p_coords, l_coords)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Binding Energy", f"{energy:.2f}")
+        c2.metric("Binding Atoms", len(site))
+        c3.metric("Ligand Atoms", len(l_coords))
 
-        st.write(f"🧬 Binding Site Residues: {len(site)} atoms")
-
-        # Energy
-        binding_energy = compute_binding_energy(p_coords, l_coords)
-        st.metric("Binding Energy", f"{binding_energy:.2f}")
-
-        # Visualization
         show_3d(prot_data, lig_data)
 
-        # Plot
         fig, ax = plt.subplots()
-        ax.bar(["Binding Energy"], [binding_energy])
+        ax.bar(["Energy"], [energy], color="lime")
         st.pyplot(fig)
 
-        # Force field integration
         if forcefield_file:
             ff = load_forcefield(forcefield_file)
             st.success("Force Field Loaded")
-            st.write(list(ff.items())[:5])
+            st.dataframe(pd.DataFrame(list(ff.items()), columns=["Atom", "Charge"]))
 
     else:
         st.info("Upload protein & ligand")
@@ -223,4 +283,4 @@ elif page == "Docking & Binding":
 # FOOTER
 # =============================
 st.markdown("---")
-st.markdown("🧬 AI-Powered Biomolecular Modeling Platform | Research Grade")
+st.markdown("🚀 AI Biomolecular Platform | Built for Research & Discovery")
