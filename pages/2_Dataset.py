@@ -1,5 +1,5 @@
 # =============================
-# FULL FLEXIBLE CHARMM/AMBER DATASET ENGINE
+# 🧬 FULL MOLECULAR DATASET + DOCKING ENGINE
 # =============================
 import streamlit as st
 import os, copy
@@ -12,30 +12,51 @@ from openmm import *
 from openmm.unit import *
 
 # =============================
-# UI
+# UI CONFIG
 # =============================
 st.set_page_config(layout="wide")
-st.title("🧬 Molecular Dataset Generator (CHARMM + AMBER + vdW)")
+st.title("🧬 Molecular Dataset Generator + Docking Scoring")
 
 OUT = "dataset_output"
 os.makedirs(OUT, exist_ok=True)
 
-uploaded_pdb = st.file_uploader("Upload PDB File", type=["pdb"])
+uploaded_pdb = st.file_uploader("📂 Upload PDB File", type=["pdb"])
 
 # =============================
-# DETECT MOLECULE TYPE
+# 🔁 PIPELINE FLOWCHART
+# =============================
+st.markdown("## 🔄 Pipeline")
+
+st.code("""
+Upload PDB
+   ↓
+Detect type (protein / ligand)
+   ↓
+Load CHARMM or AMBER
+   ↓
+Fix structure (hydrogens)
+   ↓
+Create system (PME or vacuum)
+   ↓
+Run simulation
+   ↓
+Extract energies (Eb, Ea, Ed, vdW, Eelec)
+   ↓
+Add geometry features
+   ↓
+Export dataset.csv
+""")
+
+# =============================
+# DETECT TYPE
 # =============================
 def detect_type(topology):
     protein_res = {
         "ALA","GLY","VAL","LEU","ILE","SER","THR","ASP","GLU",
         "ASN","GLN","LYS","ARG","HIS","PHE","TYR","TRP","PRO"
     }
-
     names = set([r.name for r in topology.residues()])
-
-    if names.issubset(protein_res):
-        return "protein"
-    return "ligand"
+    return "protein" if names.issubset(protein_res) else "ligand"
 
 # =============================
 # LOAD PDB
@@ -48,7 +69,7 @@ def load_pdb(file):
         return None
 
 # =============================
-# LOAD FORCEFIELD
+# LOAD FORCE FIELD
 # =============================
 def load_ff(mol_type):
     try:
@@ -57,32 +78,27 @@ def load_ff(mol_type):
         else:
             return ForceField("amber14-all.xml")
     except Exception as e:
-        st.error(f"FF error: {e}")
+        st.error(f"ForceField error: {e}")
         return None
 
 # =============================
 # PREPARE STRUCTURE
 # =============================
 def prepare(pdb, ff, mol_type):
+    modeller = Modeller(pdb.topology, pdb.positions)
     try:
-        modeller = Modeller(pdb.topology, pdb.positions)
-
-        if mol_type == "protein":
-            modeller.addHydrogens(ff)
-
-        return modeller
-
-    except Exception as e:
-        st.warning(f"Prep warning: {e}")
-        return pdb
+        modeller.addHydrogens(ff)
+    except:
+        pass
+    return modeller
 
 # =============================
-# SYSTEM CREATION
+# CREATE SYSTEM
 # =============================
 def create_system(topology, ff):
     try:
         if topology.getPeriodicBoxVectors() is None:
-            st.warning("No box → vacuum mode")
+            st.warning("⚠️ Vacuum mode (NoCutoff)")
             return ff.createSystem(
                 topology,
                 nonbondedMethod=NoCutoff,
@@ -135,7 +151,7 @@ def distance(sim):
         return np.nan
 
 # =============================
-# ENERGY
+# ENERGY EXTRACTION
 # =============================
 def get_energy(system, sim):
     try:
@@ -161,7 +177,7 @@ def get_energy(system, sim):
 
         vdw = compute_vdw(system, sim)
         E["vdW"] = vdw
-        E["Electrostatic"] = E.get("Nonbonded",0) - vdw
+        E["Electrostatic"] = E.get("Nonbonded", 0) - vdw
 
         return E
 
@@ -194,6 +210,16 @@ def generate(sim, system, steps, interval):
     return pd.DataFrame(data)
 
 # =============================
+# DOCKING SCORE (ΔE)
+# =============================
+def docking_score(df):
+    try:
+        # simple scoring: lower total energy = better binding
+        return df["Total"].min()
+    except:
+        return np.nan
+
+# =============================
 # MAIN PIPELINE
 # =============================
 if uploaded_pdb:
@@ -202,7 +228,7 @@ if uploaded_pdb:
 
     if pdb:
         mol_type = detect_type(pdb.topology)
-        st.success(f"Detected: {mol_type}")
+        st.success(f"✅ Detected: {mol_type}")
 
         ff = load_ff(mol_type)
         if ff is None:
@@ -225,26 +251,34 @@ if uploaded_pdb:
         sim.context.setPositions(modeller.positions)
         sim.minimizeEnergy()
 
-        steps = st.slider("Steps", 100, 5000, 1000)
+        # UI controls
+        steps = st.slider("Simulation Steps", 100, 5000, 1000)
         interval = st.slider("Sampling Interval", 1, 50, 10)
 
-        if st.button("🚀 Generate Dataset"):
+        if st.button("🚀 Run Simulation & Generate Dataset"):
 
             df = generate(sim, system, steps, interval)
 
-            st.success("Dataset generated")
+            score = docking_score(df)
+
+            st.success("✅ Dataset Generated")
             st.dataframe(df.head())
 
-            df.to_csv(f"{OUT}/dataset.csv", index=False)
+            # Show docking score
+            st.metric("🧲 Docking Score (Lower = Better)", f"{score:.3f} kJ/mol")
+
+            # Save
+            file_path = f"{OUT}/dataset.csv"
+            df.to_csv(file_path, index=False)
 
             st.download_button(
-                "Download Dataset",
+                "⬇️ Download dataset.csv",
                 df.to_csv(index=False),
                 "dataset.csv"
             )
 
 # =============================
-# THEORY
+# THEORY SECTION
 # =============================
 st.markdown("## 📘 Energy Model")
 
@@ -255,4 +289,4 @@ st.latex("E_d=k_d[1+\\cos(n\\phi-\\delta)]")
 st.latex("V_{vdW}=4\\epsilon[(\\sigma/r)^{12}-(\\sigma/r)^6]")
 st.latex("E_{elec}=\\frac{q_1q_2}{4\\pi\\epsilon r}")
 
-st.info("✅ Flexible: supports protein + ligand + dataset generation")
+st.info("✅ Supports protein + ligand + vdW + docking scoring + dataset export")
