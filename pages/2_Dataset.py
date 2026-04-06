@@ -1,5 +1,5 @@
 # =============================
-# 🧬 FULL REAL PDB DATASET PIPELINE
+# 🧬 FULL REAL PDB DATASET PIPELINE (FINAL CLEAN VERSION)
 # =============================
 import os
 import requests
@@ -12,15 +12,21 @@ from openmm import *
 from openmm.unit import *
 
 # =============================
+# CONFIG
+# =============================
+OUT_DIR = "pdb_dataset"
+DATASET_FILE = "final_pdb_dataset.csv"
+
+# =============================
 # STEP 1 — DOWNLOAD PDB FILES
 # =============================
-def download_pdb(pdb_ids, out_dir="pdb_dataset"):
+def download_pdb(pdb_ids, out_dir=OUT_DIR):
     os.makedirs(out_dir, exist_ok=True)
 
     for pid in pdb_ids:
         url = f"https://files.rcsb.org/download/{pid}.pdb"
         try:
-            r = requests.get(url, timeout=10)
+            r = requests.get(url, timeout=15)
 
             if r.status_code == 200:
                 with open(f"{out_dir}/{pid}.pdb", "w") as f:
@@ -28,12 +34,9 @@ def download_pdb(pdb_ids, out_dir="pdb_dataset"):
                 print(f"✅ Downloaded {pid}")
             else:
                 print(f"❌ Failed {pid}")
+
         except Exception as e:
             print(f"⚠️ Error {pid}: {e}")
-
-# Example dataset
-pdb_ids = ["1CRN", "4HHB", "1A2K", "2PTC", "3CLN"]
-download_pdb(pdb_ids)
 
 # =============================
 # STEP 2 — DETECT TYPE
@@ -43,8 +46,13 @@ def detect_type(topology):
         "ALA","GLY","VAL","LEU","ILE","SER","THR","ASP","GLU",
         "ASN","GLN","LYS","ARG","HIS","PHE","TYR","TRP","PRO"
     }
+
     names = set([r.name for r in topology.residues()])
-    return "protein" if names.issubset(protein_res) else "ligand"
+
+    # if majority are protein residues → protein
+    protein_count = sum([1 for r in names if r in protein_res])
+
+    return "protein" if protein_count > len(names)/2 else "ligand"
 
 # =============================
 # STEP 3 — LOAD FORCE FIELD
@@ -55,18 +63,24 @@ def load_ff(mol_type):
             return ForceField("charmm36.xml", "charmm36/water.xml")
         else:
             return ForceField("amber14-all.xml")
-    except:
-        return None
+    except Exception as e:
+        print(f"⚠️ FF load failed ({mol_type}), fallback to AMBER: {e}")
+        try:
+            return ForceField("amber14-all.xml")
+        except:
+            return None
 
 # =============================
 # STEP 4 — PREPARE STRUCTURE
 # =============================
 def prepare(pdb, ff):
     modeller = Modeller(pdb.topology, pdb.positions)
+
     try:
         modeller.addHydrogens(ff)
-    except:
-        pass
+    except Exception as e:
+        print("⚠️ Hydrogen addition skipped:", e)
+
     return modeller
 
 # =============================
@@ -78,11 +92,12 @@ def create_system(topology, ff):
             topology,
             nonbondedMethod=NoCutoff
         )
-    except:
+    except Exception as e:
+        print("⚠️ System creation failed:", e)
         return None
 
 # =============================
-# STEP 6 — vdW ENERGY
+# STEP 6 — vdW ENERGY (FIXED)
 # =============================
 def compute_vdw(system, simulation):
     try:
@@ -91,10 +106,13 @@ def compute_vdw(system, simulation):
         for f in sys_copy.getForces():
             if isinstance(f, NonbondedForce):
                 for i in range(f.getNumParticles()):
-                    q,s,e = f.getParticleParameters(i)
+                    q, s, e = f.getParticleParameters(i)
+                    # remove electrostatics → keep vdW
                     f.setParticleParameters(i, 0.0, s, e)
 
-        sim = Simulation(simulation.topology, sys_copy, VerletIntegrator(0.001))
+        integrator = VerletIntegrator(0.001)
+        sim = Simulation(simulation.topology, sys_copy, integrator)
+
         sim.context.setPositions(
             simulation.context.getState(getPositions=True).getPositions()
         )
@@ -102,7 +120,8 @@ def compute_vdw(system, simulation):
         state = sim.context.getState(getEnergy=True)
         return state.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
 
-    except:
+    except Exception as e:
+        print("⚠️ vdW error:", e)
         return np.nan
 
 # =============================
@@ -116,6 +135,8 @@ def get_energy(system, sim):
         E = {"Total": total}
 
         for i, f in enumerate(system.getForces()):
+            sim.context.reinitialize(preserveState=True)
+
             s = sim.context.getState(getEnergy=True, groups={i})
             val = s.getPotentialEnergy().value_in_unit(kilojoule_per_mole)
 
@@ -136,11 +157,12 @@ def get_energy(system, sim):
 
         return E
 
-    except:
+    except Exception as e:
+        print("⚠️ Energy error:", e)
         return {}
 
 # =============================
-# STEP 8 — RUN SIMULATION
+# STEP 8 — SIMULATION
 # =============================
 def simulate(modeller, system):
     integrator = LangevinIntegrator(
@@ -151,12 +173,16 @@ def simulate(modeller, system):
 
     sim = Simulation(modeller.topology, system, integrator)
     sim.context.setPositions(modeller.positions)
-    sim.minimizeEnergy()
+
+    try:
+        sim.minimizeEnergy()
+    except Exception as e:
+        print("⚠️ Minimization failed:", e)
 
     return sim
 
 # =============================
-# STEP 9 — PROCESS ONE PDB
+# STEP 9 — PROCESS SINGLE PDB
 # =============================
 def process_pdb(pdb_path):
     try:
@@ -164,54 +190,75 @@ def process_pdb(pdb_path):
 
         mol_type = detect_type(pdb.topology)
         ff = load_ff(mol_type)
+
         if ff is None:
+            print(f"❌ FF failed for {pdb_path}")
             return None
 
         modeller = prepare(pdb, ff)
         system = create_system(modeller.topology, ff)
+
         if system is None:
             return None
 
         sim = simulate(modeller, system)
 
-        # single snapshot (fast dataset)
         e = get_energy(system, sim)
 
         return {
             "PDB_ID": os.path.basename(pdb_path).replace(".pdb",""),
-            "Bond": e.get("Bond",0),
-            "Angle": e.get("Angle",0),
-            "Dihedral": e.get("Dihedral",0),
-            "vdW": e.get("vdW",0),
-            "Electrostatic": e.get("Electrostatic",0),
-            "Total": e.get("Total",0),
-            "DockingScore": e.get("Total",0)
+            "Type": mol_type,
+            "Bond": e.get("Bond", np.nan),
+            "Angle": e.get("Angle", np.nan),
+            "Dihedral": e.get("Dihedral", np.nan),
+            "vdW": e.get("vdW", np.nan),
+            "Electrostatic": e.get("Electrostatic", np.nan),
+            "Total": e.get("Total", np.nan),
+            "DockingScore": e.get("Total", np.nan)
         }
 
     except Exception as e:
-        print(f"Error {pdb_path}: {e}")
+        print(f"❌ Error {pdb_path}: {e}")
         return None
 
 # =============================
 # STEP 10 — BUILD DATASET
 # =============================
-def build_dataset(folder="pdb_dataset"):
+def build_dataset(folder=OUT_DIR):
     data = []
 
     for file in os.listdir(folder):
         if file.endswith(".pdb"):
+            print(f"🔬 Processing {file}...")
+
             row = process_pdb(os.path.join(folder, file))
+
             if row:
                 data.append(row)
 
-    df = pd.DataFrame(data)
-    df.to_csv("final_pdb_dataset.csv", index=False)
+    if len(data) == 0:
+        print("❌ No valid data generated")
+        return None
 
+    df = pd.DataFrame(data)
+    df.to_csv(DATASET_FILE, index=False)
+
+    print("\n✅ DATASET SAVED:", DATASET_FILE)
     return df
 
 # =============================
-# RUN EVERYTHING
+# RUN PIPELINE
 # =============================
-df = build_dataset()
-print("\n✅ FINAL DATASET")
-print(df.head())
+if __name__ == "__main__":
+
+    pdb_ids = ["1CRN", "4HHB", "1A2K", "2PTC", "3CLN"]
+
+    print("⬇️ Downloading PDBs...")
+    download_pdb(pdb_ids)
+
+    print("\n⚙️ Building dataset...")
+    df = build_dataset()
+
+    if df is not None:
+        print("\n📊 Preview:")
+        print(df.head())
