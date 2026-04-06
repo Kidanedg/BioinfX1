@@ -380,65 +380,90 @@ if page == "🧬 Structure Analysis":
 
             st.markdown("---")
 
-            # =============================
-            # ⚛️ GEOMETRY ANALYSIS
-            # =============================
-            st.markdown("### ⚛️ Binding Analysis")
+           # =============================
+# ⚛️ GEOMETRY ANALYSIS (NO UPLOAD)
+# =============================
+st.markdown("### ⚛️ Binding Analysis")
 
-            ligand_file = st.file_uploader("Upload Ligand (PDB)", key="ligand")
+binding_energy = None
+binding_size = None
 
-            binding_energy = None
-            binding_size = None
+# ✅ Expect ligand already stored globally
+ligand_coords = st.session_state.get("ligand_coords", None)
 
-            if ligand_file:
-                ligand_data = ligand_file.read().decode("utf-8")
-                ligand_structure = parser.get_structure("lig", StringIO(ligand_data))
-                ligand_atoms = list(ligand_structure.get_atoms())
-                ligand_coords = np.array([a.get_coord() for a in ligand_atoms])
+if ligand_coords is not None:
 
-                # Detect binding site
-                site_idx = detect_binding_site(coords, ligand_coords)
-                binding_size = len(site_idx)
+    # Detect binding site
+    site_idx = detect_binding_site(coords, ligand_coords)
+    binding_size = len(site_idx)
 
-                # Compute energy
-                binding_energy = compute_binding_energy(
-                    coords[site_idx], ligand_coords
-                )
+    if binding_size > 0:
+        # Compute energy
+        binding_energy = compute_binding_energy(
+            coords[site_idx], ligand_coords
+        )
 
-                st.metric("Binding Site Size", binding_size)
-                st.metric("Binding Energy", f"{binding_energy:.3f}")
-
-            else:
-                st.info("Upload ligand to compute binding interactions")
-
-            # =============================
-            # 🧠 AI INTERPRETATION
-            # =============================
-            st.markdown("---")
-            st.markdown("### 🧠 AI Interpretation")
-
-            insights = ai_interpret_structure(
-                n_atoms,
-                n_chains,
-                binding_energy,
-                binding_size
-            )
-
-            for insight in insights:
-                st.markdown(f"- {insight}")
-
-            st.success("AI insights generated")
-
+        st.metric("Binding Site Size", binding_size)
+        st.metric("Binding Energy", f"{binding_energy:.3f}")
     else:
-        st.warning("⚠️ Upload a protein file to begin analysis")
+        st.warning("⚠️ No binding site detected at current cutoff")
+
+else:
+    st.info("ℹ️ No ligand loaded. Please upload ligand in the designated section.")
+
+# =============================
+# 🧠 AI INTERPRETATION
+# =============================
+st.markdown("---")
+st.markdown("### 🧠 AI Interpretation")
+
+insights = ai_interpret_structure(
+    n_atoms,
+    n_chains,
+    binding_energy,
+    binding_size
+)
+
+for insight in insights:
+    st.markdown(f"- {insight}")
+
+st.success("AI insights generated")
+# =============================
+# 🧠 AI INTERPRETATION (SIMULATION)
+# =============================
+def ai_interpret_simulation(energy, sample_size, method, n_atoms):
+    insights = []
+
+    if energy < -1000:
+        insights.append("🟢 Highly stable molecular system with strong attractive forces")
+    elif energy < -100:
+        insights.append("🟢 Stable configuration — favorable atomic interactions")
+    elif energy < 100:
+        insights.append("🟡 Moderate stability — balanced attractive and repulsive forces")
+    else:
+        insights.append("🔴 High-energy system — possible steric clashes or instability")
+
+    ratio = sample_size / n_atoms
+    if ratio < 0.2:
+        insights.append("⚠️ Low sampling coverage — results may not represent full structure")
+    elif ratio < 0.7:
+        insights.append("🔹 Balanced sampling — good trade-off between speed and accuracy")
+    else:
+        insights.append("🔹 High sampling coverage — results are more reliable")
+
+    if method == "Distance Sum":
+        insights.append("📏 Distance-based model highlights structural spread, not physical energy")
+    else:
+        insights.append("⚛️ Lennard-Jones approximation captures realistic intermolecular forces")
+
+    return insights
+
+
 # =============================
 # ⚛️ SIMULATION (PREMIUM UI - FIXED)
 # =============================
 elif page == "⚛️ Simulation":
 
-    # =============================
-    # 🎨 SECTION HEADER
-    # =============================
     st.markdown("""
     <div style="
         padding:20px;
@@ -456,9 +481,6 @@ elif page == "⚛️ Simulation":
     if protein_file:
         protein_data = protein_file.read().decode("utf-8")
 
-        # =============================
-        # 🔬 STRUCTURE PARSING
-        # =============================
         parser = PDBParser(QUIET=True)
         structure = parser.get_structure("prot", StringIO(protein_data))
         atoms = list(structure.get_atoms())
@@ -470,9 +492,6 @@ elif page == "⚛️ Simulation":
         coords = np.array([a.get_coord() for a in atoms])
         n_atoms = int(len(coords))
 
-        # =============================
-        # 📊 DASHBOARD
-        # =============================
         st.markdown("### 📊 System Overview")
 
         c1, c2, c3 = st.columns(3)
@@ -501,23 +520,14 @@ elif page == "⚛️ Simulation":
 
         st.success("✅ Protein structure loaded successfully")
 
-        # =============================
-        # 🧊 VIEWER
-        # =============================
         st.markdown("### 🧊 3D Molecular Structure")
         show_3d(protein_data)
 
-        # =============================
-        # ⚙️ CONTROLS PANEL
-        # =============================
         st.markdown("### ⚙️ Simulation Control Panel")
 
-        box1, box2 = st.columns([2,1])
+        box1, box2 = st.columns([2, 1])
 
         with box1:
-            # =============================
-            # 🔧 FIXED SLIDER (NO CRASH)
-            # =============================
             if n_atoms < 10:
                 st.error("❌ Protein too small for simulation")
                 st.stop()
@@ -532,7 +542,7 @@ elif page == "⚛️ Simulation":
                 max_value=max_atoms,
                 value=default_atoms,
                 step=1,
-                help=f"Total atoms: {n_atoms} | Reduce for faster simulation"
+                help=f"Total atoms: {n_atoms}"
             )
 
             method = st.radio(
@@ -554,24 +564,18 @@ elif page == "⚛️ Simulation":
 
             with st.spinner("🧠 Running molecular computation..."):
 
-                # ✅ Better random sampling
                 coords_sample = coords[np.random.choice(n_atoms, sample_size, replace=False)]
 
-                # Fake progress (UX)
                 for i in range(100):
                     progress.progress(i + 1)
 
-                # =============================
-                # ⚛️ ENERGY CALCULATION
-                # =============================
                 if method == "Distance Sum":
                     energy = np.sum([
                         np.linalg.norm(coords_sample[i] - coords_sample[j])
                         for i in range(len(coords_sample))
                         for j in range(i + 1, len(coords_sample))
                     ])
-
-                elif method == "Lennard-Jones (approx)":
+                else:
                     energy = 0.0
                     for i in range(len(coords_sample)):
                         for j in range(i + 1, len(coords_sample)):
@@ -591,6 +595,24 @@ elif page == "⚛️ Simulation":
                 r2.metric("🔬 Sample Size", sample_size)
 
                 st.success("🎉 Simulation completed successfully!")
+
+                # =============================
+                # 🧠 AI SIMULATION INSIGHTS ✅ FIXED
+                # =============================
+                st.markdown("---")
+                st.markdown("### 🧠 AI Simulation Insights")
+
+                insights = ai_interpret_simulation(
+                    energy,
+                    sample_size,
+                    method,
+                    n_atoms
+                )
+
+                for insight in insights:
+                    st.markdown(f"- {insight}")
+
+                st.success("AI-powered simulation insights generated")
 
                 # =============================
                 # 📊 DISTRIBUTION
@@ -622,7 +644,57 @@ elif page == "⚛️ Simulation":
 
     else:
         st.warning("⚠️ Upload a protein PDB file to start simulation")
-# 🧪 DOCKING (ENHANCED)
+# =============================
+# 🧠 AI INTERPRETATION (DOCKING)
+# =============================
+def ai_interpret_docking(energy, site_size, method, ligand_atoms):
+    insights = []
+
+    # -----------------------------
+    # Energy interpretation
+    # -----------------------------
+    if energy < -50:
+        insights.append("🟢 Strong binding affinity — highly favorable interaction")
+    elif energy < -10:
+        insights.append("🟢 Moderate binding — stable interaction likely")
+    elif energy < 10:
+        insights.append("🟡 Weak binding — interaction may be transient")
+    else:
+        insights.append("🔴 Poor binding — ligand likely unstable in site")
+
+    # -----------------------------
+    # Binding site interpretation
+    # -----------------------------
+    if site_size < 5:
+        insights.append("⚠️ Very small binding site — limited interaction surface")
+    elif site_size < 20:
+        insights.append("🔹 Defined binding pocket — typical drug-like interaction")
+    else:
+        insights.append("🔹 Large binding interface — possible multi-contact stabilization")
+
+    # -----------------------------
+    # Method insight
+    # -----------------------------
+    if method == "Centroid Align":
+        insights.append("📍 Fast alignment method — useful for initial approximation")
+    else:
+        insights.append("🎯 Random search improves docking accuracy but is computationally heavier")
+
+    # -----------------------------
+    # Ligand size insight
+    # -----------------------------
+    if ligand_atoms < 10:
+        insights.append("🧪 Small ligand — high mobility, lower specificity")
+    elif ligand_atoms < 50:
+        insights.append("🧪 متوسط ligand size — balanced flexibility and specificity")
+    else:
+        insights.append("🧪 Large ligand — stronger interactions but possible steric clashes")
+
+    return insights
+
+
+# =============================
+# 🧪 DOCKING (ENHANCED + FIXED)
 # =============================
 elif page == "🧪 Docking":
 
@@ -673,13 +745,13 @@ elif page == "🧪 Docking":
             with st.spinner("Running docking simulation..."):
 
                 # -----------------------------
-                # BASIC DOCKING STRATEGY
+                # DOCKING STRATEGY
                 # -----------------------------
                 if method == "Centroid Align":
                     shift = p_coords.mean(axis=0) - l_coords.mean(axis=0)
                     l_coords_shifted = l_coords + shift
 
-                elif method == "Random Search":
+                else:  # Random Search
                     best_energy = float("inf")
                     l_coords_shifted = l_coords.copy()
 
@@ -709,6 +781,24 @@ elif page == "🧪 Docking":
                 r3.metric("🧪 Ligand Atoms", len(l_coords_shifted))
 
                 # =============================
+                # 🧠 AI DOCKING INSIGHTS ✅ NEW
+                # =============================
+                st.markdown("---")
+                st.markdown("### 🧠 AI Docking Insights")
+
+                insights = ai_interpret_docking(
+                    energy,
+                    len(site),
+                    method,
+                    len(l_coords_shifted)
+                )
+
+                for insight in insights:
+                    st.markdown(f"- {insight}")
+
+                st.success("AI-powered docking interpretation generated")
+
+                # =============================
                 # 🧊 POST-DOCKING VISUALIZATION
                 # =============================
                 st.markdown("### 🧊 Docked Complex")
@@ -726,7 +816,7 @@ elif page == "🧪 Docking":
                 st.pyplot(fig)
 
                 # =============================
-                # 🔥 DISTANCE ANALYSIS
+                # 🔍 DISTANCE ANALYSIS
                 # =============================
                 st.markdown("### 🔍 Protein–Ligand Distance Map")
 
@@ -742,7 +832,7 @@ elif page == "🧪 Docking":
                 st.pyplot(fig2)
 
                 # =============================
-                # ⚛️ FORCE FIELD
+                # ⚛️ FORCE FIELD (OPTIONAL)
                 # =============================
                 if forcefield_file:
                     ff = load_forcefield(forcefield_file)
