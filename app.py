@@ -268,10 +268,6 @@ def distance(a, b):
 
 
 def detect_binding_site(protein_coords, ligand_coords, cutoff=5.0):
-    """
-    Detect binding site atoms within cutoff distance
-    Vectorized for performance
-    """
     dists = np.linalg.norm(
         protein_coords[:, None, :] - ligand_coords[None, :, :],
         axis=2
@@ -281,9 +277,6 @@ def detect_binding_site(protein_coords, ligand_coords, cutoff=5.0):
 
 
 def compute_binding_energy(p_coords, l_coords):
-    """
-    Simplified Lennard-Jones–like attractive term
-    """
     dists = np.linalg.norm(
         p_coords[:, None, :] - l_coords[None, :, :],
         axis=2
@@ -294,99 +287,150 @@ def compute_binding_energy(p_coords, l_coords):
 
 
 def load_forcefield(file):
-    """Load atom charge parameters"""
     df = pd.read_csv(file)
     return dict(zip(df["atom"], df["charge"]))
 
 
 # =============================
-# STRUCTURE PAGE (ENHANCED UI)
+# 🧠 AI INTERPRETATION ENGINE
+# =============================
+def ai_interpret_structure(n_atoms, n_chains, binding_energy=None, binding_size=None):
+    insights = []
+
+    # Size
+    if n_atoms < 1000:
+        insights.append("🔹 Small protein — fast folding, compact structure")
+    elif n_atoms < 5000:
+        insights.append("🔹 Medium protein — functional domains likely")
+    else:
+        insights.append("🔹 Large protein — complex multi-domain system")
+
+    # Chains
+    if n_chains == 1:
+        insights.append("🔸 Monomer — independent biological function")
+    else:
+        insights.append("🔸 Multi-chain — cooperative or regulatory behavior")
+
+    # Binding insight
+    if binding_energy is not None:
+        if binding_energy < -100:
+            insights.append("🟢 Strong ligand binding affinity predicted")
+        elif binding_energy < -20:
+            insights.append("🟡 Moderate binding interaction")
+        else:
+            insights.append("🔴 Weak or unstable binding interaction")
+
+    if binding_size is not None:
+        insights.append(f"🧩 Binding site atoms detected: {binding_size}")
+
+    return insights
+
+
+# =============================
+# STRUCTURE PAGE (ENHANCED UI + GEOMETRY + AI)
 # =============================
 if page == "🧬 Structure Analysis":
 
     st.title("🧬 Protein Structure Intelligence")
 
     st.markdown(
-        "Explore hierarchical organization of biomolecules inspired by "
-        "modern "
+        "Explore biomolecular structure with integrated geometry and AI insights"
     )
 
     # =============================
-    # METRICS DASHBOARD
+    # DASHBOARD
     # =============================
     col1, col2, col3, col4 = st.columns(4)
 
-    with col1:
-        st.markdown("### 🧾 Primary")
-        st.caption("Amino acid sequence")
-        st.metric("Level", "1°")
-
-    with col2:
-        st.markdown("### 🌀 Secondary")
-        st.caption("α-helices / β-sheets")
-        st.metric("Level", "2°")
-
-    with col3:
-        st.markdown("### 🧩 Tertiary")
-        st.caption("3D folding structure")
-        st.metric("Level", "3°")
-
-    with col4:
-        st.markdown("### 🧬 Quaternary")
-        st.caption("Multi-chain assembly")
-        st.metric("Level", "4°")
+    col1.metric("Primary", "1°")
+    col2.metric("Secondary", "2°")
+    col3.metric("Tertiary", "3°")
+    col4.metric("Quaternary", "4°")
 
     st.markdown("---")
 
-    # =============================
-    # VISUALIZATION PANEL
-    # =============================
     if protein_file:
         protein_data = protein_file.read().decode("utf-8")
 
+        parser = PDBParser(QUIET=True)
+        structure = parser.get_structure("prot", StringIO(protein_data))
+
+        atoms = list(structure.get_atoms())
+        coords = np.array([a.get_coord() for a in atoms])
+
+        chains = list(structure.get_chains())
+
+        n_atoms = len(coords)
+        n_chains = len(chains)
+
         st.success("✅ Protein structure loaded successfully")
 
-        # Layout split
+        # =============================
+        # LAYOUT
+        # =============================
         left, right = st.columns([2, 1])
 
         with left:
             show_3d(protein_data)
 
         with right:
-            st.markdown("### 🔬 Structure Insights")
-
-            st.info(
-                "• Cartoon model shows secondary structure\n"
-                "• Surface reveals solvent accessibility\n"
-                "• Colors represent residue progression"
-            )
-
-            st.markdown("### ⚙️ Visualization Controls")
-
-            style = st.selectbox(
-                "Rendering Style",
-                ["Cartoon", "Surface", "Stick"]
-            )
-
-            color = st.selectbox(
-                "Color Scheme",
-                ["Spectrum", "Chain", "Hydrophobicity"]
-            )
+            st.markdown("### 📊 Quick Stats")
+            st.metric("Atoms", n_atoms)
+            st.metric("Chains", n_chains)
 
             st.markdown("---")
 
-            st.markdown("### 📊 Quick Stats")
+            # =============================
+            # ⚛️ GEOMETRY ANALYSIS
+            # =============================
+            st.markdown("### ⚛️ Binding Analysis")
 
-            parser = PDBParser(QUIET=True)
-            structure = parser.get_structure("prot", StringIO(protein_data))
-            atoms = list(structure.get_atoms())
+            ligand_file = st.file_uploader("Upload Ligand (PDB)", key="ligand")
 
-            st.metric("Atoms", len(atoms))
-            st.metric("Chains", len(list(structure.get_chains())))
+            binding_energy = None
+            binding_size = None
+
+            if ligand_file:
+                ligand_data = ligand_file.read().decode("utf-8")
+                ligand_structure = parser.get_structure("lig", StringIO(ligand_data))
+                ligand_atoms = list(ligand_structure.get_atoms())
+                ligand_coords = np.array([a.get_coord() for a in ligand_atoms])
+
+                # Detect binding site
+                site_idx = detect_binding_site(coords, ligand_coords)
+                binding_size = len(site_idx)
+
+                # Compute energy
+                binding_energy = compute_binding_energy(
+                    coords[site_idx], ligand_coords
+                )
+
+                st.metric("Binding Site Size", binding_size)
+                st.metric("Binding Energy", f"{binding_energy:.3f}")
+
+            else:
+                st.info("Upload ligand to compute binding interactions")
+
+            # =============================
+            # 🧠 AI INTERPRETATION
+            # =============================
+            st.markdown("---")
+            st.markdown("### 🧠 AI Interpretation")
+
+            insights = ai_interpret_structure(
+                n_atoms,
+                n_chains,
+                binding_energy,
+                binding_size
+            )
+
+            for insight in insights:
+                st.markdown(f"- {insight}")
+
+            st.success("AI insights generated")
 
     else:
-        st.markdown("### 📂 Upload Required")
-        st.warning("Please upload a protein file to begin analysis")
+        st.warning("⚠️ Upload a protein file to begin analysis")
 # =============================
 # ⚛️ SIMULATION (PREMIUM UI - FIXED)
 # =============================
