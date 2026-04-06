@@ -707,7 +707,7 @@ def ai_interpret_docking(energy, site_size, method, ligand_atoms):
 # =============================
 # 🧪 DOCKING (ENHANCED + FIXED)
 # =============================
-elif page == "🧪 Docking":
+if page == "🧪 Docking":
 
     st.markdown("## 🧪 Molecular Docking Studio")
     st.caption("Protein–Ligand interaction analysis and binding evaluation")
