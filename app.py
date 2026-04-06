@@ -88,15 +88,6 @@ h1, h2, h3 {
 """, unsafe_allow_html=True)
 
 # =============================
-# 🔬 SAFE IMPORT
-# =============================
-try:
-    from Bio.PDB import PDBParser
-except:
-    st.error("⚠️ Install Biopython: pip install biopython")
-    st.stop()
-
-# =============================
 # 🔐 LOGIN SYSTEM (ENHANCED)
 # =============================
 USERS = {"student": "1234", "admin": "admin"}
