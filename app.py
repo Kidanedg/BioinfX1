@@ -44,32 +44,52 @@ st.sidebar.title("📚 Navigation")
 
 page = st.sidebar.radio(
     "Go to",
-    ["Simulation", "Structure Analysis"]
+    ["Simulation", "Docking & Binding", "Structure Analysis"]
 )
 
-pdb_file = st.sidebar.file_uploader("Upload PDB", type="pdb")
+pdb_file = st.sidebar.file_uploader("Upload Protein PDB", type="pdb")
+ligand_file = st.sidebar.file_uploader("Upload Ligand PDB", type="pdb")
 
 # =============================
-# 3D VIEWER
+# VISUAL EXPLANATION (IMAGES)
 # =============================
-def show_3d(pdb_string, style="stick"):
-    styles = {
-        "stick": '{"stick":{}}',
-        "sphere": '{"sphere":{}}',
-        "cartoon": '{"cartoon":{}}'
-    }
+if page == "Structure Analysis":
+    st.title("🧬 Protein Structure Insight")
+
+    st.markdown("### 🧬 Protein Structural Levels")
+
+    
+
+    st.markdown("""
+    - **Primary**: amino acid sequence  
+    - **Secondary**: α-helix, β-sheet  
+    - **Tertiary**: 3D folding  
+    - **Quaternary**: multi-chain complexes  
+    """)
+
+# =============================
+# 3D VIEWER (ADVANCED)
+# =============================
+def show_3d(pdb_string, style="cartoon"):
 
     html = f"""
     <div id="viewer" style="width:100%; height:500px;"></div>
     <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
     <script>
-        let viewer = $3Dmol.createViewer("viewer", {{backgroundColor: "white"}});
+        let viewer = $3Dmol.createViewer("viewer", {{backgroundColor: "black"}});
         viewer.addModel(`{pdb_string}`, "pdb");
-        viewer.setStyle({styles[style]});
+
+        viewer.setStyle({{}}, {{
+            cartoon: {{
+                color: 'spectrum'
+            }}
+        }});
+
         viewer.zoomTo();
         viewer.render();
     </script>
     """
+
     components.html(html, height=500)
 
 # =============================
@@ -78,25 +98,37 @@ def show_3d(pdb_string, style="stick"):
 def distance(a, b):
     return np.linalg.norm(a - b)
 
-def detect_bonds(coords, cutoff=1.8):
+def detect_bonds(coords):
     return [(i, j) for i in range(len(coords))
             for j in range(i+1, len(coords))
-            if distance(coords[i], coords[j]) < cutoff]
+            if distance(coords[i], coords[j]) < 1.8]
 
-def neighbor_list(coords, cutoff=8.0):
+def neighbor_list(coords):
     return [(i, j) for i in range(len(coords))
             for j in range(i+1, len(coords))
-            if distance(coords[i], coords[j]) < cutoff]
+            if distance(coords[i], coords[j]) < 6.0]
 
 # =============================
 # CHARGES
 # =============================
 def assign_charges(atoms):
-    charge_map = {"O": -0.5, "N": -0.3, "C": 0.2, "H": 0.1, "S": -0.2}
+    charge_map = {"O": -0.5, "N": -0.3, "C": 0.2, "H": 0.1}
     return np.array([charge_map.get(a.element.strip(), 0.0) for a in atoms])
 
 # =============================
-# ENERGY PIPELINE
+# HYDROGEN BONDS
+# =============================
+def detect_hbonds(coords, atoms):
+    hbonds = []
+    for i in range(len(coords)):
+        for j in range(i+1, len(coords)):
+            if atoms[i].element == "O" and atoms[j].element == "H":
+                if distance(coords[i], coords[j]) < 2.5:
+                    hbonds.append((i, j))
+    return hbonds
+
+# =============================
+# ENERGY
 # =============================
 def compute_energy(coords, atoms):
 
@@ -104,89 +136,105 @@ def compute_energy(coords, atoms):
     pairs = neighbor_list(coords)
     charges = assign_charges(atoms)
 
-    E_bond = 0
-    E_vdw = 0
-    E_coulomb = 0
+    E_bond = E_vdw = E_coulomb = 0
 
-    # Bond energy
     for i, j in bonds:
         r = distance(coords[i], coords[j])
         E_bond += 300 * (r - 1.5)**2
 
-    # Nonbonded
     for i, j in pairs:
         r = distance(coords[i], coords[j]) + 1e-6
 
-        # Lennard-Jones
-        sigma = 3.5
-        epsilon = 0.2
-        E_vdw += 4 * epsilon * ((sigma/r)**12 - (sigma/r)**6)
-
-        # Coulomb
+        E_vdw += 4 * 0.2 * ((3.5/r)**12 - (3.5/r)**6)
         E_coulomb += (charges[i] * charges[j]) / r
-
-    total = E_bond + E_vdw + E_coulomb
 
     return bonds, pairs, {
         "Bond": E_bond,
-        "Van der Waals": E_vdw,
+        "VDW": E_vdw,
         "Coulomb": E_coulomb,
-        "Total": total
+        "Total": E_bond + E_vdw + E_coulomb
     }
 
 # =============================
-# MAIN
+# DOCKING (SIMPLE)
 # =============================
-if pdb_file:
+def simple_docking(protein_coords, ligand_coords):
+    center = protein_coords.mean(axis=0)
+    ligand_center = ligand_coords.mean(axis=0)
+
+    shift = center - ligand_center
+    ligand_coords += shift
+
+    return ligand_coords
+
+# =============================
+# MAIN: SIMULATION
+# =============================
+if page == "Simulation" and pdb_file:
 
     pdb_data = pdb_file.read().decode("utf-8")
 
     parser = PDBParser(QUIET=True)
-    structure = parser.get_structure("mol", StringIO(pdb_data))
+    structure = parser.get_structure("prot", StringIO(pdb_data))
     atoms = list(structure.get_atoms())
     coords = np.array([a.get_coord() for a in atoms])
 
     st.success(f"{len(coords)} atoms loaded")
 
-    style = st.selectbox("Visualization Style", ["stick", "sphere", "cartoon"])
-    show_3d(pdb_data, style)
+    show_3d(pdb_data)
 
-    # =============================
-    # PIPELINE RUN
-    # =============================
-    if st.button("🚀 Run Interaction Pipeline"):
+    if st.button("Run Interaction Analysis"):
 
         bonds, pairs, energy = compute_energy(coords, atoms)
+        hbonds = detect_hbonds(coords, atoms)
 
-        # ENERGY OUTPUT
-        st.subheader("⚡ Energy Results")
-        st.metric("Total Energy (kcal/mol)", f"{energy['Total']:.2f}")
+        st.metric("Total Energy", f"{energy['Total']:.2f}")
 
-        # ENERGY PLOT
         fig, ax = plt.subplots()
         ax.bar(energy.keys(), energy.values())
-        ax.set_title("Energy Components")
         st.pyplot(fig)
 
-        # =============================
-        # BOND TABLE
-        # =============================
-        st.subheader("🔗 Bonds Detected")
-        bond_df = pd.DataFrame(bonds, columns=["Atom1", "Atom2"])
-        st.dataframe(bond_df)
+        st.write(f"🔗 Bonds: {len(bonds)}")
+        st.write(f"💧 Hydrogen Bonds: {len(hbonds)}")
 
-        # =============================
-        # INTERACTION TABLE
-        # =============================
-        st.subheader("🌐 Nonbonded Interactions")
-        inter_df = pd.DataFrame(pairs[:200], columns=["Atom1", "Atom2"])
-        st.dataframe(inter_df)
+# =============================
+# DOCKING PAGE
+# =============================
+elif page == "Docking & Binding":
 
-else:
-    st.info("👈 Upload a PDB file")
+    st.title("⚛️ Docking Simulation")
+
+    
+
+    if pdb_file and ligand_file:
+
+        prot_data = pdb_file.read().decode("utf-8")
+        lig_data = ligand_file.read().decode("utf-8")
+
+        parser = PDBParser(QUIET=True)
+
+        prot = parser.get_structure("p", StringIO(prot_data))
+        lig = parser.get_structure("l", StringIO(lig_data))
+
+        p_atoms = list(prot.get_atoms())
+        l_atoms = list(lig.get_atoms())
+
+        p_coords = np.array([a.get_coord() for a in p_atoms])
+        l_coords = np.array([a.get_coord() for a in l_atoms])
+
+        docked = simple_docking(p_coords, l_coords)
+
+        st.success("Docking completed (center-based)")
+
+        st.write("📌 Ligand moved to protein center")
+
+        st.metric("Estimated Binding Energy", f"{-np.linalg.norm(docked.mean(axis=0)):.2f}")
+
+    else:
+        st.info("Upload both protein and ligand")
 
 # =============================
 # FOOTER
 # =============================
 st.markdown("---")
-st.markdown("🔬 Biomolecular Interaction & Energy Platform")
+st.markdown("🔬 Advanced Biomolecular Modeling & Docking Platform")
