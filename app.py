@@ -143,54 +143,134 @@ def show_3d(protein, ligand=None):
     </script>
     """
     components.html(html, height=650)
-
 # =============================
-# GEOMETRY
+# GEOMETRY (OPTIMIZED + CLEAN)
 # =============================
 def distance(a, b):
+    """Euclidean distance between two 3D points"""
     return np.linalg.norm(a - b)
 
-def detect_binding_site(protein_coords, ligand_coords):
-    site = []
-    for i, p in enumerate(protein_coords):
-        for l in ligand_coords:
-            if distance(p, l) < 5.0:
-                site.append(i)
-                break
-    return list(set(site))
+
+def detect_binding_site(protein_coords, ligand_coords, cutoff=5.0):
+    """
+    Detect binding site atoms within cutoff distance
+    Vectorized for performance
+    """
+    dists = np.linalg.norm(
+        protein_coords[:, None, :] - ligand_coords[None, :, :],
+        axis=2
+    )
+    site_indices = np.where((dists < cutoff).any(axis=1))[0]
+    return site_indices.tolist()
+
 
 def compute_binding_energy(p_coords, l_coords):
-    energy = 0
-    for p in p_coords:
-        for l in l_coords:
-            r = distance(p, l) + 1e-6
-            energy += -1 / r
+    """
+    Simplified Lennard-Jones–like attractive term
+    """
+    dists = np.linalg.norm(
+        p_coords[:, None, :] - l_coords[None, :, :],
+        axis=2
+    ) + 1e-6
+
+    energy = np.sum(-1.0 / dists)
     return energy
 
+
 def load_forcefield(file):
+    """Load atom charge parameters"""
     df = pd.read_csv(file)
     return dict(zip(df["atom"], df["charge"]))
 
+
 # =============================
-# STRUCTURE PAGE
+# STRUCTURE PAGE (ENHANCED UI)
 # =============================
 if page == "🧬 Structure Analysis":
 
-    st.title("🧬 Protein Structure Analysis")
+    st.title("🧬 Protein Structure Intelligence")
 
+    st.markdown(
+        "Explore hierarchical organization of biomolecules inspired by "
+        "modern "
+    )
+
+    # =============================
+    # METRICS DASHBOARD
+    # =============================
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Primary", "Sequence")
-    col2.metric("Secondary", "α / β")
-    col3.metric("Tertiary", "3D Fold")
-    col4.metric("Quaternary", "Multi-chain")
+
+    with col1:
+        st.markdown("### 🧾 Primary")
+        st.caption("Amino acid sequence")
+        st.metric("Level", "1°")
+
+    with col2:
+        st.markdown("### 🌀 Secondary")
+        st.caption("α-helices / β-sheets")
+        st.metric("Level", "2°")
+
+    with col3:
+        st.markdown("### 🧩 Tertiary")
+        st.caption("3D folding structure")
+        st.metric("Level", "3°")
+
+    with col4:
+        st.markdown("### 🧬 Quaternary")
+        st.caption("Multi-chain assembly")
+        st.metric("Level", "4°")
 
     st.markdown("---")
 
+    # =============================
+    # VISUALIZATION PANEL
+    # =============================
     if protein_file:
         protein_data = protein_file.read().decode("utf-8")
-        show_3d(protein_data)
+
+        st.success("✅ Protein structure loaded successfully")
+
+        # Layout split
+        left, right = st.columns([2, 1])
+
+        with left:
+            show_3d(protein_data)
+
+        with right:
+            st.markdown("### 🔬 Structure Insights")
+
+            st.info(
+                "• Cartoon model shows secondary structure\n"
+                "• Surface reveals solvent accessibility\n"
+                "• Colors represent residue progression"
+            )
+
+            st.markdown("### ⚙️ Visualization Controls")
+
+            style = st.selectbox(
+                "Rendering Style",
+                ["Cartoon", "Surface", "Stick"]
+            )
+
+            color = st.selectbox(
+                "Color Scheme",
+                ["Spectrum", "Chain", "Hydrophobicity"]
+            )
+
+            st.markdown("---")
+
+            st.markdown("### 📊 Quick Stats")
+
+            parser = PDBParser(QUIET=True)
+            structure = parser.get_structure("prot", StringIO(protein_data))
+            atoms = list(structure.get_atoms())
+
+            st.metric("Atoms", len(atoms))
+            st.metric("Chains", len(list(structure.get_chains())))
+
     else:
-        st.info("Upload a protein to visualize")
+        st.markdown("### 📂 Upload Required")
+        st.warning("Please upload a protein file to begin analysis")
 
 # =============================
 # SIMULATION
