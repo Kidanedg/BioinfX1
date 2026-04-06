@@ -549,7 +549,7 @@ def run_openmm_charmm(protein_data):
     except Exception as e:
         return {"error": str(e)}
 # =============================
-# ⚛️ SIMULATION (OPTIMIZED)
+# ⚛️ SIMULATION (MODE CONTROLLED)
 # =============================
 if page == "⚛️ Simulation":
 
@@ -567,6 +567,9 @@ if page == "⚛️ Simulation":
     </div>
     """, unsafe_allow_html=True)
 
+    # =============================
+    # 📂 INPUT
+    # =============================
     if protein_file:
 
         protein_data = protein_file.read().decode("utf-8")
@@ -581,26 +584,7 @@ if page == "⚛️ Simulation":
 
         coords = np.array([a.get_coord() for a in atoms])
         n_atoms = len(coords)
-st.markdown("### ⚛️ CHARMM Simulation (OpenMM)")
 
-run_openmm = st.button("🚀 Run CHARMM Simulation")
-
-if run_openmm:
-
-    with st.spinner("🧠 Running OpenMM CHARMM simulation..."):
-
-        results = run_openmm_charmm(protein_data)
-
-        if "error" in results:
-            st.error(f"❌ {results['error']}")
-        else:
-            st.success("✅ Simulation completed")
-
-            c1, c2, c3 = st.columns(3)
-
-            c1.metric("⚡ Initial Energy", str(results["initial_energy"]))
-            c2.metric("🧊 Minimized Energy", str(results["minimized_energy"]))
-            c3.metric("🔁 Final Energy", str(results["final_energy"]))
         # =============================
         # 📊 OVERVIEW
         # =============================
@@ -639,114 +623,133 @@ if run_openmm:
         show_3d(protein_data)
 
         # =============================
-        # ⚙️ CONTROLS
+        # 🎛️ MODE SELECTOR (FIXED POSITION)
         # =============================
-        st.markdown("### ⚙️ Simulation Control Panel")
+        st.markdown("---")
+        mode = st.radio(
+            "⚙️ Select Simulation Mode",
+            ["Custom", "CHARMM (OpenMM)"],
+            horizontal=True
+        )
 
-        if n_atoms < 10:
-            st.error("❌ Protein too small for simulation")
-            st.stop()
+        # ==========================================================
+        # ⚛️ CHARMM MODE
+        # ==========================================================
+        if mode == "CHARMM (OpenMM)":
 
-        col1, col2 = st.columns([2, 1])
+            st.markdown("### ⚛️ CHARMM Simulation")
 
-        with col1:
-            min_atoms = 10 if n_atoms < 100 else 100
-            default_atoms = min(1000, n_atoms)
+            run_openmm = st.button("🚀 Run CHARMM Simulation")
 
-            sample_size = st.slider(
-                "🔬 Sample Size",
-                min_value=min_atoms,
-                max_value=n_atoms,
-                value=default_atoms
-            )
+            if run_openmm:
 
-            method = st.radio(
-                "⚛️ Energy Model",
-                ["Distance Sum", "Lennard-Jones (approx)"],
-                horizontal=True
-            )
+                with st.spinner("🧠 Running OpenMM simulation..."):
 
-        with col2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            run_btn = st.button("⚡ Run Simulation", use_container_width=True)
+                    results = run_openmm_charmm(protein_data)
 
-        # =============================
-        # 🚀 RUN SIMULATION
-        # =============================
-        if run_btn:
+                    if "error" in results:
+                        st.error(f"❌ {results['error']}")
+                    else:
+                        st.success("✅ Simulation completed")
 
-            with st.spinner("🧠 Running simulation..."):
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("⚡ Initial Energy", str(results["initial_energy"]))
+                        c2.metric("🧊 Minimized Energy", str(results["minimized_energy"]))
+                        c3.metric("🔁 Final Energy", str(results["final_energy"]))
 
-                coords_sample = coords[np.random.choice(n_atoms, sample_size, replace=False)]
+        # ==========================================================
+        # ⚙️ CUSTOM MODE
+        # ==========================================================
+        else:
 
-                # =============================
-                # ⚡ FAST VECTOR CALCULATION
-                # =============================
-                diff = coords_sample[:, None, :] - coords_sample[None, :, :]
-                dist_matrix = np.linalg.norm(diff, axis=-1)
+            st.markdown("### ⚙️ Custom Simulation")
 
-                # Avoid division by zero
-                dist_matrix[dist_matrix == 0] = 1e-9
+            if n_atoms < 10:
+                st.error("❌ Protein too small for simulation")
+                st.stop()
 
-                if method == "Distance Sum":
-                    energy = np.sum(dist_matrix) / 2  # avoid double counting
-                else:
-                    inv_r6 = (1 / dist_matrix**6)
-                    energy = np.sum(inv_r6**2 - 2 * inv_r6) / 2
+            col1, col2 = st.columns([2, 1])
 
-                # =============================
-                # 📈 RESULTS
-                # =============================
-                st.markdown("### 📈 Simulation Results")
-
-                r1, r2 = st.columns(2)
-                r1.metric("⚡ System Energy", f"{energy:.3f}")
-                r2.metric("🔬 Sample Size", sample_size)
-
-                st.success("🎉 Simulation completed successfully!")
-
-                # =============================
-                # 🧠 AI INSIGHTS
-                # =============================
-                st.markdown("---")
-                st.markdown("### 🧠 AI Simulation Insights")
-
-                insights = ai_interpret_simulation(
-                    energy,
-                    sample_size,
-                    method,
-                    n_atoms
+            with col1:
+                sample_size = st.slider(
+                    "🔬 Sample Size",
+                    min_value=10,
+                    max_value=n_atoms,
+                    value=min(500, n_atoms)
                 )
 
-                for insight in insights:
-                    st.markdown(f"- {insight}")
+                method = st.radio(
+                    "⚛️ Energy Model",
+                    ["Distance Sum", "Lennard-Jones"],
+                    horizontal=True
+                )
 
-                st.success("AI-powered simulation insights generated")
+            with col2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                run_btn = st.button("⚡ Run Simulation", use_container_width=True)
 
-                # =============================
-                # 📊 DISTRIBUTION
-                # =============================
-                st.markdown("### 📊 Atomic Distribution")
+            if run_btn:
 
-                fig, ax = plt.subplots()
-                ax.hist(coords_sample.flatten(), bins=50)
-                ax.set_title("Atomic Coordinate Distribution")
-                st.pyplot(fig)
+                with st.spinner("🧠 Running simulation..."):
 
-                # =============================
-                # 🔥 HEATMAP
-                # =============================
-                st.markdown("### 🔥 Distance Interaction Map")
+                    coords_sample = coords[
+                        np.random.choice(n_atoms, sample_size, replace=False)
+                    ]
 
-                fig2, ax2 = plt.subplots()
-                im = ax2.imshow(dist_matrix)
-                plt.colorbar(im, ax=ax2)
-                ax2.set_title("Pairwise Distance Matrix")
-                st.pyplot(fig2)
+                    diff = coords_sample[:, None, :] - coords_sample[None, :, :]
+                    dist_matrix = np.linalg.norm(diff, axis=-1)
+
+                    dist_matrix[dist_matrix == 0] = 1e-9
+
+                    if method == "Distance Sum":
+                        energy = np.sum(dist_matrix) / 2
+                    else:
+                        inv_r6 = (1 / dist_matrix**6)
+                        energy = np.sum(inv_r6**2 - 2 * inv_r6) / 2
+
+                    # RESULTS
+                    st.markdown("### 📈 Simulation Results")
+
+                    r1, r2 = st.columns(2)
+                    r1.metric("⚡ System Energy", f"{energy:.3f}")
+                    r2.metric("🔬 Sample Size", sample_size)
+
+                    st.success("🎉 Simulation completed successfully!")
+
+                    # AI INSIGHTS
+                    st.markdown("---")
+                    st.markdown("### 🧠 AI Simulation Insights")
+
+                    insights = ai_interpret_simulation(
+                        energy,
+                        sample_size,
+                        method,
+                        n_atoms
+                    )
+
+                    for insight in insights:
+                        st.markdown(f"- {insight}")
+
+                    # DISTRIBUTION
+                    st.markdown("### 📊 Atomic Distribution")
+
+                    fig, ax = plt.subplots()
+                    ax.hist(coords_sample.flatten(), bins=50)
+                    st.pyplot(fig)
+
+                    # HEATMAP
+                    if sample_size <= 300:
+                        st.markdown("### 🔥 Distance Interaction Map")
+
+                        fig2, ax2 = plt.subplots()
+                        im = ax2.imshow(dist_matrix)
+                        plt.colorbar(im, ax=ax2)
+                        st.pyplot(fig2)
+                    else:
+                        st.info("ℹ️ Heatmap disabled for large samples")
 
     else:
-        st.warning("⚠️ Upload a protein PDB file to start simulation")
-# =============================
+        st.warning("⚠️ Upload a protein PDB file to start simulation")# =============================
 # 🧠 AI INTERPRETATION (DOCKING)
 # =============================
 def ai_interpret_docking(energy, site_size, method, ligand_atoms):
